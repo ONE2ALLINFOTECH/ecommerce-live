@@ -4,8 +4,7 @@ const { protect } = require('../middlewares/authMiddleware');
 
 const router = express.Router();
 
-router.get('/', protect, getBrands);
-router.post('/', protect, createBrand);
+router.get('/', getBrands); // ✅ This line onlyrouter.post('/', protect, createBrand);
 router.put('/:id', protect, updateBrand);
 router.delete('/:id', protect, deleteBrand);
 
