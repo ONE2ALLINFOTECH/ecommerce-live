@@ -6,11 +6,25 @@ export const registerUserCustomer = createAsyncThunk(
   async (userData, { rejectWithValue }) => {
     try {
       const { data } = await API.post('/auth-customer/register', userData);
-      localStorage.setItem('token', data.token);
-      localStorage.setItem('userCustomer', JSON.stringify(data));
-      return data;
+      
+      console.log('✅ Register Response:', data);
+      
+      // Token save karo
+      if (data.token) {
+        localStorage.setItem('token', data.token);
+        console.log('✅ Token saved in localStorage');
+      }
+      
+      const userDataWithUsername = {
+        ...data,
+        username: data.name
+      };
+      
+      localStorage.setItem('userCustomer', JSON.stringify(userDataWithUsername));
+      return userDataWithUsername;
     } catch (error) {
-      return rejectWithValue(error.response.data);
+      console.error('❌ Register Error:', error.response?.data);
+      return rejectWithValue(error.response?.data || { message: 'Registration failed' });
     }
   }
 );
@@ -20,11 +34,28 @@ export const loginUserCustomer = createAsyncThunk(
   async (credentials, { rejectWithValue }) => {
     try {
       const { data } = await API.post('/auth-customer/login', credentials);
-      localStorage.setItem('token', data.token);
-      localStorage.setItem('userCustomer', JSON.stringify(data));
-      return data;
+      
+      console.log('✅ Login Response:', data);
+      console.log('✅ Token from response:', data.token);
+      
+      // Token save karo
+      if (data.token) {
+        localStorage.setItem('token', data.token);
+        console.log('✅ Token saved in localStorage:', localStorage.getItem('token'));
+      } else {
+        console.error('❌ No token in response!');
+      }
+      
+      const userDataWithUsername = {
+        ...data,
+        username: data.name
+      };
+      
+      localStorage.setItem('userCustomer', JSON.stringify(userDataWithUsername));
+      return userDataWithUsername;
     } catch (error) {
-      return rejectWithValue(error.response.data);
+      console.error('❌ Login Error:', error.response?.data);
+      return rejectWithValue(error.response?.data || { message: 'Login failed' });
     }
   }
 );
@@ -36,7 +67,7 @@ export const forgotPasswordCustomer = createAsyncThunk(
       const { data } = await API.post('/auth-customer/forgot-password', { email });
       return data;
     } catch (error) {
-      return rejectWithValue(error.response.data);
+      return rejectWithValue(error.response?.data || { message: 'Request failed' });
     }
   }
 );
@@ -48,7 +79,7 @@ export const resetPasswordCustomer = createAsyncThunk(
       const { data } = await API.post('/auth-customer/reset-password', resetData);
       return data;
     } catch (error) {
-      return rejectWithValue(error.response.data);
+      return rejectWithValue(error.response?.data || { message: 'Reset failed' });
     }
   }
 );
@@ -63,7 +94,7 @@ export const getProfileCustomer = createAsyncThunk(
       });
       return data;
     } catch (error) {
-      return rejectWithValue(error.response.data);
+      return rejectWithValue(error.response?.data || { message: 'Failed to get profile' });
     }
   }
 );
@@ -92,7 +123,6 @@ const userCustomerSlice = createSlice({
   },
   extraReducers: (builder) => {
     builder
-      // Register
       .addCase(registerUserCustomer.pending, (state) => {
         state.loading = true;
         state.error = null;
@@ -106,7 +136,6 @@ const userCustomerSlice = createSlice({
         state.loading = false;
         state.error = action.payload?.message || 'Registration failed';
       })
-      // Login
       .addCase(loginUserCustomer.pending, (state) => {
         state.loading = true;
         state.error = null;
@@ -120,14 +149,12 @@ const userCustomerSlice = createSlice({
         state.loading = false;
         state.error = action.payload?.message || 'Login failed';
       })
-      // Forgot Password
       .addCase(forgotPasswordCustomer.fulfilled, (state) => {
         state.loading = false;
       })
       .addCase(forgotPasswordCustomer.rejected, (state, action) => {
         state.error = action.payload?.message;
       })
-      // Get Profile
       .addCase(getProfileCustomer.fulfilled, (state, action) => {
         state.userInfo = { ...state.userInfo, ...action.payload };
       });
