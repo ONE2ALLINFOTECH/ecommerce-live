@@ -2,14 +2,25 @@ const Stripe = require('stripe');
 
 class StripePayment {
   constructor() {
-    this.stripe = Stripe(process.env.STRIPE_SECRET_KEY);
-    this.currency = 'inr';
-    
-    console.log('💳 Stripe Configuration:', {
-      environment: process.env.NODE_ENV,
-      publishableKey: process.env.STRIPE_PUBLISHABLE_KEY ? '✓ Present' : '✗ Missing',
-      secretKey: process.env.STRIPE_SECRET_KEY ? '✓ Present' : '✗ Missing'
-    });
+    // Validate Stripe secret key
+    if (!process.env.STRIPE_SECRET_KEY) {
+      console.error('❌ STRIPE_SECRET_KEY is missing');
+      throw new Error('Stripe secret key is required');
+    }
+
+    try {
+      this.stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+      this.currency = 'inr';
+      
+      console.log('💳 Stripe Configuration:', {
+        environment: process.env.NODE_ENV,
+        publishableKey: process.env.STRIPE_PUBLISHABLE_KEY ? '✓ Present' : '✗ Missing',
+        secretKey: process.env.STRIPE_SECRET_KEY ? '✓ Present' : '✗ Missing'
+      });
+    } catch (error) {
+      console.error('❌ Stripe initialization failed:', error);
+      throw new Error('Failed to initialize Stripe');
+    }
   }
 
   async createPaymentIntent(orderData) {
@@ -21,9 +32,14 @@ class StripePayment {
         customer: orderData.customer_name
       });
 
+      // Validate amount
+      if (!orderData.amount || orderData.amount < 1) {
+        throw new Error('Invalid amount for payment');
+      }
+
       const paymentIntent = await this.stripe.paymentIntents.create({
         amount: Math.round(orderData.amount * 100), // Convert to paise
-        currency: orderData.currency,
+        currency: orderData.currency || 'inr',
         metadata: {
           order_id: orderData.order_id,
           customer_id: orderData.customer_id,

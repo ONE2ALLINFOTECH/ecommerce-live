@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import { loadStripe } from '@stripe/stripe-js';
@@ -7,7 +7,13 @@ import { clearCart } from '../store/cartSlice';
 import API from '../services/api';
 
 // Load Stripe outside component to avoid recreating Stripe object
-const stripePromise = loadStripe(process.env.REACT_APP_STRIPE_PUBLISHABLE_KEY);
+let stripePromise;
+try {
+  stripePromise = loadStripe(process.env.REACT_APP_STRIPE_PUBLISHABLE_KEY);
+  console.log('✅ Stripe loaded successfully');
+} catch (error) {
+  console.error('❌ Stripe loading error:', error);
+}
 
 // Stripe Checkout Form Component
 const StripeCheckoutForm = ({ 
@@ -22,10 +28,19 @@ const StripeCheckoutForm = ({
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState('');
 
+  // Validate clientSecret
+  useEffect(() => {
+    if (!clientSecret) {
+      console.error('❌ Client secret is missing');
+      onError('Payment configuration error. Please try again.');
+    }
+  }, [clientSecret, onError]);
+
   const handleSubmit = async (event) => {
     event.preventDefault();
     
     if (!stripe || !elements) {
+      setError('Payment system is not ready. Please wait...');
       return;
     }
 
@@ -34,26 +49,39 @@ const StripeCheckoutForm = ({
 
     try {
       const cardElement = elements.getElement(CardElement);
+      
+      if (!cardElement) {
+        throw new Error('Card element not found');
+      }
+
+      if (!clientSecret) {
+        throw new Error('Payment session expired. Please try again.');
+      }
+
+      console.log('🔄 Processing payment...');
 
       const { error: stripeError, paymentIntent } = await stripe.confirmCardPayment(clientSecret, {
         payment_method: {
           card: cardElement,
           billing_details: {
-            name: 'Customer Name', // You can pass customer name here
+            name: 'Customer Name',
           },
         }
       });
 
       if (stripeError) {
+        console.error('❌ Stripe payment error:', stripeError);
         setError(stripeError.message);
         onError(stripeError.message);
-      } else if (paymentIntent.status === 'succeeded') {
+      } else if (paymentIntent && paymentIntent.status === 'succeeded') {
         console.log('✅ Payment successful:', paymentIntent);
         onSuccess(paymentIntent);
+      } else {
+        throw new Error('Payment failed. Please try again.');
       }
     } catch (error) {
-      console.error('❌ Payment error:', error);
-      setError('Payment failed. Please try again.');
+      console.error('❌ Payment processing error:', error);
+      setError(error.message || 'Payment failed. Please try again.');
       onError(error.message);
     } finally {
       setProcessing(false);
@@ -74,34 +102,47 @@ const StripeCheckoutForm = ({
     hidePostalCode: true,
   };
 
-  return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="border border-gray-300 rounded-lg p-3 bg-white">
-        <CardElement options={cardElementOptions} />
-      </div>
-      
-      {error && (
+  if (!clientSecret) {
+    return (
+      <div className="border border-gray-200 rounded-lg p-4 bg-gray-50 mt-4">
         <div className="text-red-600 text-sm bg-red-50 border border-red-200 rounded-lg p-3">
-          {error}
+          Payment configuration error. Please try again.
         </div>
-      )}
-      
-      <button
-        type="submit"
-        disabled={!stripe || processing}
-        className={`w-full py-3 rounded font-semibold text-sm transition-colors shadow-md ${
-          !stripe || processing
-            ? 'bg-gray-400 text-gray-200 cursor-not-allowed'
-            : 'bg-blue-600 text-white hover:bg-blue-700'
-        }`}
-      >
-        {processing ? 'PROCESSING PAYMENT...' : `PAY ₹${orderAmount}`}
-      </button>
-      
-      <div className="text-xs text-gray-500 text-center">
-        Your payment is secure and encrypted
       </div>
-    </form>
+    );
+  }
+
+  return (
+    <div className="border border-gray-200 rounded-lg p-4 bg-gray-50 mt-4">
+      <h4 className="font-medium text-gray-900 mb-3">Card Payment</h4>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="border border-gray-300 rounded-lg p-3 bg-white">
+          <CardElement options={cardElementOptions} />
+        </div>
+        
+        {error && (
+          <div className="text-red-600 text-sm bg-red-50 border border-red-200 rounded-lg p-3">
+            {error}
+          </div>
+        )}
+        
+        <button
+          type="submit"
+          disabled={!stripe || processing}
+          className={`w-full py-3 rounded font-semibold text-sm transition-colors shadow-md ${
+            !stripe || processing
+              ? 'bg-gray-400 text-gray-200 cursor-not-allowed'
+              : 'bg-blue-600 text-white hover:bg-blue-700'
+          }`}
+        >
+          {processing ? 'PROCESSING PAYMENT...' : `PAY ₹${orderAmount}`}
+        </button>
+        
+        <div className="text-xs text-gray-500 text-center">
+          Your payment is secure and encrypted
+        </div>
+      </form>
+    </div>
   );
 };
 
@@ -115,6 +156,8 @@ const CheckoutCustomer = () => {
   const [loading, setLoading] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('');
   const [paymentData, setPaymentData] = useState(null);
+  const [showStripeForm, setShowStripeForm] = useState(false);
+  const [stripeError, setStripeError] = useState('');
   const [address, setAddress] = useState({
     name: userInfo?.username || '',
     mobile: '',
@@ -152,7 +195,7 @@ const CheckoutCustomer = () => {
 
   const availablePaymentMethods = getAvailablePaymentMethods();
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (!paymentMethod) {
       if (availablePaymentMethods.online) {
         setPaymentMethod('online');
@@ -188,6 +231,7 @@ const CheckoutCustomer = () => {
     }
 
     setLoading(true);
+    setStripeError('');
 
     try {
       const orderData = {
@@ -201,14 +245,15 @@ const CheckoutCustomer = () => {
 
       console.log('✅ Order response:', data);
 
-      if (paymentMethod === 'online') {
-        // Set payment data for Stripe
+      if (paymentMethod === 'online' && data.clientSecret) {
+        // Set payment data for Stripe and show the form
         setPaymentData({
           clientSecret: data.clientSecret,
           orderId: data.orderId,
           orderAmount: data.orderAmount
         });
-      } else {
+        setShowStripeForm(true);
+      } else if (paymentMethod === 'cod') {
         // COD payment - clear cart and redirect
         console.log('✅ COD order placed, redirecting to success page');
         
@@ -221,6 +266,8 @@ const CheckoutCustomer = () => {
             paymentMethod: 'cod'
           }
         });
+      } else {
+        alert('Failed to process order. Please try again.');
       }
     } catch (error) {
       console.error('❌ Order creation failed:', error);
@@ -252,8 +299,27 @@ const CheckoutCustomer = () => {
 
   const handlePaymentError = (error) => {
     console.error('❌ Payment failed:', error);
+    setStripeError(error);
     alert(`Payment failed: ${error}`);
   };
+
+  // Check if Stripe is loaded properly
+  if (!stripePromise) {
+    return (
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
+        <div className="bg-white p-8 rounded-lg shadow-md">
+          <h2 className="text-xl font-bold text-red-600 mb-4">Payment System Error</h2>
+          <p className="text-gray-600">Stripe payment gateway is not configured properly.</p>
+          <button 
+            onClick={() => window.location.reload()}
+            className="mt-4 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+          >
+            Reload Page
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -443,7 +509,12 @@ const CheckoutCustomer = () => {
                     name="paymentMethod"
                     value="online"
                     checked={paymentMethod === 'online'}
-                    onChange={(e) => setPaymentMethod(e.target.value)}
+                    onChange={(e) => {
+                      setPaymentMethod(e.target.value);
+                      setShowStripeForm(false);
+                      setPaymentData(null);
+                      setStripeError('');
+                    }}
                     disabled={!availablePaymentMethods.online}
                     className="w-4 h-4 mt-1 text-blue-600 focus:ring-0 disabled:cursor-not-allowed"
                   />
@@ -474,7 +545,12 @@ const CheckoutCustomer = () => {
                     name="paymentMethod"
                     value="cod"
                     checked={paymentMethod === 'cod'}
-                    onChange={(e) => setPaymentMethod(e.target.value)}
+                    onChange={(e) => {
+                      setPaymentMethod(e.target.value);
+                      setShowStripeForm(false);
+                      setPaymentData(null);
+                      setStripeError('');
+                    }}
                     disabled={!availablePaymentMethods.cod}
                     className="w-4 h-4 mt-1 text-blue-600 focus:ring-0 disabled:cursor-not-allowed"
                   />
@@ -496,19 +572,23 @@ const CheckoutCustomer = () => {
                   </div>
                 </label>
 
-                {/* Stripe Payment Form */}
-                {paymentData && paymentMethod === 'online' && (
-                  <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
-                    <h4 className="font-medium text-gray-900 mb-3">Card Payment</h4>
-                    <Elements stripe={stripePromise}>
-                      <StripeCheckoutForm
-                        clientSecret={paymentData.clientSecret}
-                        orderId={paymentData.orderId}
-                        orderAmount={paymentData.orderAmount}
-                        onSuccess={handlePaymentSuccess}
-                        onError={handlePaymentError}
-                      />
-                    </Elements>
+                {/* Stripe Payment Form - Only show after CONTINUE button is clicked for online payment */}
+                {showStripeForm && paymentData && paymentMethod === 'online' && (
+                  <Elements stripe={stripePromise} options={{ clientSecret: paymentData.clientSecret }}>
+                    <StripeCheckoutForm
+                      clientSecret={paymentData.clientSecret}
+                      orderId={paymentData.orderId}
+                      orderAmount={paymentData.orderAmount}
+                      onSuccess={handlePaymentSuccess}
+                      onError={handlePaymentError}
+                    />
+                  </Elements>
+                )}
+
+                {/* Stripe Error Display */}
+                {stripeError && (
+                  <div className="text-red-600 text-sm bg-red-50 border border-red-200 rounded-lg p-3">
+                    {stripeError}
                   </div>
                 )}
 
@@ -559,7 +639,7 @@ const CheckoutCustomer = () => {
                 </div>
               </div>
               <div className="px-6 pb-6">
-                {!paymentData && (
+                {!showStripeForm && (
                   <button
                     onClick={handlePlaceOrder}
                     disabled={loading || (!availablePaymentMethods.online && !availablePaymentMethods.cod)}
@@ -569,7 +649,7 @@ const CheckoutCustomer = () => {
                         : 'bg-orange-500 text-white hover:bg-orange-600'
                     }`}
                   >
-                    {loading ? 'PROCESSING...' : 'CONTINUE'}
+                    {loading ? 'PROCESSING...' : `PAY ₹${finalAmount.toFixed(0)}`}
                   </button>
                 )}
                 
