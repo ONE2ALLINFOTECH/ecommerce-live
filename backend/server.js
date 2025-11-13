@@ -2,6 +2,7 @@ const express = require('express');
 const dotenv = require('dotenv');
 const cors = require('cors');
 const connectDB = require('./config/db');
+
 dotenv.config();
 connectDB();
 
@@ -17,7 +18,8 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.options("*", cors(corsOptions));
+// ❌ REMOVE THIS — Express 5 crashes on wildcard
+// app.options("*", cors(corsOptions));
 
 app.use(express.json());
 
