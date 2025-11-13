@@ -170,8 +170,7 @@ router.post('/create', protectCustomer, async (req, res) => {
           paymentIntentId: stripeResponse.payment_intent_id,
           publishableKey: process.env.STRIPE_PUBLISHABLE_KEY,
           orderAmount: finalAmount,
-          currency: stripeResponse.currency,
-          success: true
+          currency: stripeResponse.currency
         });
 
       } catch (stripeError) {
@@ -204,8 +203,7 @@ router.post('/create', protectCustomer, async (req, res) => {
         orderId: order.orderId,
         message: 'Order placed successfully with Cash on Delivery',
         orderAmount: finalAmount,
-        paymentMethod: 'cod',
-        success: true
+        paymentMethod: 'cod'
       });
     }
 
