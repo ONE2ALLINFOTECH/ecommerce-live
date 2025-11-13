@@ -1,9 +1,111 @@
 import React, { useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
+import { loadStripe } from '@stripe/stripe-js';
+import { Elements, CardElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import { clearCart } from '../store/cartSlice';
 import API from '../services/api';
 
+// Load Stripe outside component to avoid recreating Stripe object
+const stripePromise = loadStripe(process.env.REACT_APP_STRIPE_PUBLISHABLE_KEY);
+
+// Stripe Checkout Form Component
+const StripeCheckoutForm = ({ 
+  clientSecret, 
+  orderId, 
+  orderAmount, 
+  onSuccess, 
+  onError 
+}) => {
+  const stripe = useStripe();
+  const elements = useElements();
+  const [processing, setProcessing] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    
+    if (!stripe || !elements) {
+      return;
+    }
+
+    setProcessing(true);
+    setError('');
+
+    try {
+      const cardElement = elements.getElement(CardElement);
+
+      const { error: stripeError, paymentIntent } = await stripe.confirmCardPayment(clientSecret, {
+        payment_method: {
+          card: cardElement,
+          billing_details: {
+            name: 'Customer Name', // You can pass customer name here
+          },
+        }
+      });
+
+      if (stripeError) {
+        setError(stripeError.message);
+        onError(stripeError.message);
+      } else if (paymentIntent.status === 'succeeded') {
+        console.log('✅ Payment successful:', paymentIntent);
+        onSuccess(paymentIntent);
+      }
+    } catch (error) {
+      console.error('❌ Payment error:', error);
+      setError('Payment failed. Please try again.');
+      onError(error.message);
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const cardElementOptions = {
+    style: {
+      base: {
+        fontSize: '16px',
+        color: '#424770',
+        '::placeholder': {
+          color: '#aab7c4',
+        },
+        padding: '10px 12px',
+      },
+    },
+    hidePostalCode: true,
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="border border-gray-300 rounded-lg p-3 bg-white">
+        <CardElement options={cardElementOptions} />
+      </div>
+      
+      {error && (
+        <div className="text-red-600 text-sm bg-red-50 border border-red-200 rounded-lg p-3">
+          {error}
+        </div>
+      )}
+      
+      <button
+        type="submit"
+        disabled={!stripe || processing}
+        className={`w-full py-3 rounded font-semibold text-sm transition-colors shadow-md ${
+          !stripe || processing
+            ? 'bg-gray-400 text-gray-200 cursor-not-allowed'
+            : 'bg-blue-600 text-white hover:bg-blue-700'
+        }`}
+      >
+        {processing ? 'PROCESSING PAYMENT...' : `PAY ₹${orderAmount}`}
+      </button>
+      
+      <div className="text-xs text-gray-500 text-center">
+        Your payment is secure and encrypted
+      </div>
+    </form>
+  );
+};
+
+// Main Checkout Component
 const CheckoutCustomer = () => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
@@ -12,6 +114,7 @@ const CheckoutCustomer = () => {
 
   const [loading, setLoading] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('');
+  const [paymentData, setPaymentData] = useState(null);
   const [address, setAddress] = useState({
     name: userInfo?.username || '',
     mobile: '',
@@ -99,26 +202,11 @@ const CheckoutCustomer = () => {
       console.log('✅ Order response:', data);
 
       if (paymentMethod === 'online') {
-        // Online payment - load Cashfree SDK
-        await loadCashfreeSDK();
-        
-        if (!data.paymentSessionId) {
-          throw new Error('Payment session ID not received');
-        }
-
-        console.log('🔄 Initializing payment with session:', data.paymentSessionId);
-        
-        const cashfree = new window.Cashfree(data.paymentSessionId);
-        
-        cashfree.checkout({
-          paymentSessionId: data.paymentSessionId,
-          redirectTarget: "_self"
-        }).then(() => {
-          console.log('Payment redirect initiated');
-        }).catch((error) => {
-          console.error('Cashfree checkout error:', error);
-          alert('Payment initialization failed. Please try again.');
-          setLoading(false);
+        // Set payment data for Stripe
+        setPaymentData({
+          clientSecret: data.clientSecret,
+          orderId: data.orderId,
+          orderAmount: data.orderAmount
         });
       } else {
         // COD payment - clear cart and redirect
@@ -142,31 +230,29 @@ const CheckoutCustomer = () => {
         || 'Failed to create order. Please try again.';
       
       alert(errorMessage);
+    } finally {
       setLoading(false);
     }
   };
 
-  const loadCashfreeSDK = () => {
-    return new Promise((resolve, reject) => {
-      if (window.Cashfree) {
-        console.log('✅ Cashfree SDK already loaded');
-        resolve();
-        return;
+  const handlePaymentSuccess = (paymentIntent) => {
+    console.log('✅ Payment successful, redirecting...');
+    
+    dispatch(clearCart());
+    
+    navigate('/order-success', { 
+      state: { 
+        orderId: paymentData.orderId,
+        amount: paymentData.orderAmount,
+        paymentMethod: 'online',
+        paymentIntentId: paymentIntent.id
       }
-
-      console.log('📥 Loading Cashfree SDK...');
-      const script = document.createElement('script');
-      script.src = "https://sdk.cashfree.com/js/v3/cashfree.js";
-      script.onload = () => {
-        console.log('✅ Cashfree SDK loaded successfully');
-        resolve();
-      };
-      script.onerror = () => {
-        console.error('❌ Failed to load Cashfree SDK');
-        reject(new Error('Failed to load Cashfree SDK'));
-      };
-      document.head.appendChild(script);
     });
+  };
+
+  const handlePaymentError = (error) => {
+    console.error('❌ Payment failed:', error);
+    alert(`Payment failed: ${error}`);
   };
 
   return (
@@ -363,13 +449,13 @@ const CheckoutCustomer = () => {
                   />
                   <div className="flex-1">
                     <div className="font-medium text-gray-900 flex items-center">
-                      UPI / Credit / Debit Card / Net Banking
+                      Credit / Debit Card / UPI / Net Banking
                       {!availablePaymentMethods.online && (
                         <span className="ml-2 text-xs bg-red-100 text-red-800 px-2 py-1 rounded">Not Available</span>
                       )}
                     </div>
                     <div className="text-sm text-gray-500 mt-1">
-                      Pay securely with multiple payment options
+                      Pay securely with Stripe
                       {!availablePaymentMethods.online && (
                         <div className="text-red-600 text-xs mt-1">
                           Some products in your cart don't support online payment
@@ -409,6 +495,22 @@ const CheckoutCustomer = () => {
                     </div>
                   </div>
                 </label>
+
+                {/* Stripe Payment Form */}
+                {paymentData && paymentMethod === 'online' && (
+                  <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                    <h4 className="font-medium text-gray-900 mb-3">Card Payment</h4>
+                    <Elements stripe={stripePromise}>
+                      <StripeCheckoutForm
+                        clientSecret={paymentData.clientSecret}
+                        orderId={paymentData.orderId}
+                        orderAmount={paymentData.orderAmount}
+                        onSuccess={handlePaymentSuccess}
+                        onError={handlePaymentError}
+                      />
+                    </Elements>
+                  </div>
+                )}
 
                 {/* Warning if no payment methods available */}
                 {!availablePaymentMethods.online && !availablePaymentMethods.cod && (
@@ -457,17 +559,19 @@ const CheckoutCustomer = () => {
                 </div>
               </div>
               <div className="px-6 pb-6">
-                <button
-                  onClick={handlePlaceOrder}
-                  disabled={loading || (!availablePaymentMethods.online && !availablePaymentMethods.cod)}
-                  className={`w-full py-3 rounded font-semibold text-sm transition-colors shadow-md ${
-                    loading || (!availablePaymentMethods.online && !availablePaymentMethods.cod)
-                      ? 'bg-gray-400 text-gray-200 cursor-not-allowed'
-                      : 'bg-orange-500 text-white hover:bg-orange-600'
-                  }`}
-                >
-                  {loading ? 'PROCESSING...' : 'PLACE ORDER'}
-                </button>
+                {!paymentData && (
+                  <button
+                    onClick={handlePlaceOrder}
+                    disabled={loading || (!availablePaymentMethods.online && !availablePaymentMethods.cod)}
+                    className={`w-full py-3 rounded font-semibold text-sm transition-colors shadow-md ${
+                      loading || (!availablePaymentMethods.online && !availablePaymentMethods.cod)
+                        ? 'bg-gray-400 text-gray-200 cursor-not-allowed'
+                        : 'bg-orange-500 text-white hover:bg-orange-600'
+                    }`}
+                  >
+                    {loading ? 'PROCESSING...' : 'CONTINUE'}
+                  </button>
+                )}
                 
                 {(!availablePaymentMethods.online && !availablePaymentMethods.cod) && (
                   <p className="text-red-600 text-xs mt-2 text-center">
