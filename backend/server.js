@@ -8,18 +8,25 @@ connectDB();
 
 const app = express();
 
-const corsOptions = {
-  origin: [
-    "https://ecomerce-indol-eight.vercel.app",
-    "http://localhost:3000"
-  ],
-  methods: "GET,HEAD,PUT,PATCH,POST,DELETE",
-  credentials: true,
-};
+// 🔥 FIXED CORS
+const allowedOrigins = [
+  "https://ecomerce-indol-eight.vercel.app",
+  "http://localhost:3000",
+];
 
-app.use(cors(corsOptions));
-// ❌ REMOVE THIS — Express 5 crashes on wildcard
-// app.options("*", cors(corsOptions));
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    credentials: true,
+    methods: "GET,HEAD,PUT,PATCH,POST,DELETE",
+  })
+);
 
 app.use(express.json());
 
