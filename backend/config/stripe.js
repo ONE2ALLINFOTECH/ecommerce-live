@@ -8,18 +8,36 @@ class StripePayment {
     console.log('💳 Stripe Configuration:', {
       environment: process.env.NODE_ENV,
       publishableKey: process.env.STRIPE_PUBLISHABLE_KEY ? '✓ Present' : '✗ Missing',
-      secretKey: process.env.STRIPE_SECRET_KEY ? '✓ Present' : '✗ Missing'
+      secretKey: process.env.STRIPE_SECRET_KEY ? '✓ Present' : '✗ Missing',
+      frontendUrl: process.env.FRONTEND_URL || 'Not Set'
     });
+  }
+
+  // Get Frontend URL with fallback
+  getFrontendUrl() {
+    if (process.env.FRONTEND_URL) {
+      return process.env.FRONTEND_URL;
+    }
+    
+    // Fallback URLs based on environment
+    if (process.env.NODE_ENV === 'production') {
+      return 'https://ecomerce-indol-eight.vercel.app';
+    }
+    
+    return 'http://localhost:3000';
   }
 
   // Create Checkout Session (for hosted payment page)
   async createCheckoutSession(orderData) {
     try {
+      const frontendUrl = this.getFrontendUrl();
+      
       console.log('🔄 Creating Stripe Checkout Session:', {
         order_id: orderData.order_id,
         amount: orderData.amount,
         currency: orderData.currency,
-        customer: orderData.customer_name
+        customer: orderData.customer_name,
+        frontendUrl: frontendUrl
       });
 
       const session = await this.stripe.checkout.sessions.create({
@@ -38,8 +56,8 @@ class StripePayment {
           },
         ],
         mode: 'payment',
-        success_url: `${process.env.FRONTEND_URL}/order-success?session_id={CHECKOUT_SESSION_ID}&order_id=${orderData.order_id}`,
-        cancel_url: `${process.env.FRONTEND_URL}/order-failed?order_id=${orderData.order_id}`,
+        success_url: `${frontendUrl}/order-success?session_id={CHECKOUT_SESSION_ID}&order_id=${orderData.order_id}`,
+        cancel_url: `${frontendUrl}/order-failed?order_id=${orderData.order_id}`,
         customer_email: orderData.customer_email,
         metadata: {
           order_id: orderData.order_id,
@@ -53,6 +71,9 @@ class StripePayment {
       });
 
       console.log('✅ Stripe Checkout Session Created Successfully');
+      console.log('📍 Success URL:', session.success_url);
+      console.log('📍 Cancel URL:', session.cancel_url);
+      
       return {
         session_id: session.id,
         url: session.url,
@@ -71,6 +92,8 @@ class StripePayment {
         throw new Error('Unable to connect to payment gateway. Please check your internet connection.');
       } else if (error.type === 'StripeCardError') {
         throw new Error(`Card error: ${error.message}`);
+      } else if (error.code === 'url_invalid') {
+        throw new Error('Payment gateway configuration error. Please contact support.');
       } else {
         throw new Error(error.message || 'Payment gateway error');
       }
@@ -118,7 +141,7 @@ class StripePayment {
       return { 
         success: true, 
         message: 'Stripe connection successful',
-        account: await this.stripe.accounts.retrieve()
+        frontendUrl: this.getFrontendUrl()
       };
     } catch (error) {
       return { 
