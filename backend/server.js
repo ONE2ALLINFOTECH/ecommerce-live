@@ -28,7 +28,8 @@ app.use('/api/auth-customer', require('./routes/authCustomerRoutes'));
 app.use('/api/categories', require('./routes/categoryRoutes'));
 app.use('/api/brands', require('./routes/brandRoutes'));
 app.use('/api/products', require('./routes/productRoutes'));
-app.use('/api/cart', require('./routes/cart'));
+// server.js mei change karo
+app.use('/api/cart', require('./routes/cartRoutes')); // ✅ correct
 app.use('/api/orders', require('./routes/orderRoutes'));
 
 const PORT = process.env.PORT || 5000;
