@@ -17,37 +17,41 @@ import LoginCustomer from './components/AuthCustomer/LoginCustomer';
 import RegisterCustomer from './components/AuthCustomer/RegisterCustomer';
 import ForgotPasswordCustomer from './components/AuthCustomer/ForgotPasswordCustomer';
 import ProtectedRouteCustomer from './components/ProtectedRouteCustomer';
-import 'bootstrap/dist/js/bootstrap.bundle.min.js';
 import CheckoutCustomer from './pages/CheckoutCustomer';
 import OrderSuccess from './pages/OrderSuccess';
 import OrderStatus from './pages/OrderStatus';
 import MyOrders from './pages/MyOrders';
 import AdminOrders from './pages/AdminOrders';
+import 'bootstrap/dist/js/bootstrap.bundle.min.js';
+
 function App() {
   return (
     <Router>
       <Routes>
+        {/* Public Routes */}
+        <Route path="/" element={<UserHome />} />
         <Route path="/home" element={<UserHome />} />
         <Route path="/category/:slug" element={<UserElectroniccategory />} />
-        <Route path="/cart" element={<CartCustomer />} />
         <Route path="/product/:id" element={<ProductDetail />} />
-        // In your main App.js or routing file
-<Route path="/checkout-customer" element={<CheckoutCustomer />} />
-<Route path="/order-success" element={<OrderSuccess />} />
-<Route path="/order-status" element={<OrderStatus />} />
-<Route path="/orders" element={<MyOrders />} />
-
-// In Dashboard routes
-<Route path="orders" element={<AdminOrders />} />
+        
         {/* Customer Auth Routes */}
         <Route path="/login-customer" element={<LoginCustomer />} />
         <Route path="/register-customer" element={<RegisterCustomer />} />
         <Route path="/forgot-password-customer" element={<ForgotPasswordCustomer />} />
         
-        {/* Admin Routes */}
+        {/* Customer Protected Routes */}
+        <Route path="/cart" element={<CartCustomer />} />
+        <Route path="/checkout-customer" element={<CheckoutCustomer />} />
+        <Route path="/order-success" element={<OrderSuccess />} />
+        <Route path="/order-status" element={<OrderStatus />} />
+        <Route path="/orders" element={<MyOrders />} />
+        
+        {/* Admin Auth Routes */}
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
         <Route path="/forget" element={<ForgetPassword />} />
+        
+        {/* Admin Dashboard Routes */}
         <Route path="/dashboard" element={<Dashboard />}>
           <Route path="categories" element={<CategoryList />} />
           <Route path="categories/add" element={<CategoryForm />} />
@@ -58,9 +62,8 @@ function App() {
           <Route path="products" element={<ProductList />} />
           <Route path="products/new" element={<ProductForm />} />
           <Route path="products/edit/:id" element={<ProductForm />} />
+          <Route path="orders" element={<AdminOrders />} />
         </Route>
-        
-        <Route path="/" element={<UserHome />} />
       </Routes>
     </Router>
   );
