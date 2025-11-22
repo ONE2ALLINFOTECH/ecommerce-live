@@ -106,6 +106,11 @@ const orderSchema = new mongoose.Schema({
     enum: ['pending', 'confirmed', 'shipped', 'delivered', 'cancelled'],
     default: 'pending'
   },
+  // Ekart Logistics Fields
+  ekartTrackingId: String,
+  ekartShipmentData: mongoose.Schema.Types.Mixed,
+  ekartLabelUrl: String,
+  ekartAWB: String,
   // Stripe Payment Fields
   stripeSessionId: String,
   stripePaymentIntentId: String,
@@ -134,6 +139,7 @@ orderSchema.pre('save', async function(next) {
 
 // Add index for better performance
 orderSchema.index({ orderId: 1 }, { unique: true });
+orderSchema.index({ ekartTrackingId: 1 });
 orderSchema.index({ stripePaymentIntentId: 1 });
 orderSchema.index({ stripeSessionId: 1 });
 
