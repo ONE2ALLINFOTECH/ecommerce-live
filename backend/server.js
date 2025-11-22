@@ -8,6 +8,22 @@ connectDB();
 
 const app = express();
 
+// Check required environment variables
+const requiredEnvVars = [
+  'EKART_CLIENT_ID',
+  'EKART_USERNAME', 
+  'EKART_PASSWORD',
+  'SELLER_NAME',
+  'SELLER_ADDRESS'
+];
+
+const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
+if (missingVars.length > 0) {
+  console.warn('⚠️ Missing environment variables:', missingVars);
+} else {
+  console.log('✅ All required environment variables are set');
+}
+
 // 🔥 FIXED CORS
 const allowedOrigins = [
   "https://ecomerce-indol-eight.vercel.app",
