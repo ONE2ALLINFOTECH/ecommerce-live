@@ -43,37 +43,30 @@ router.post('/create', protectCustomer, async (req, res) => {
       });
     }
 
-    if (!paymentMethod) {
+    if (!paymentMethod || !['online', 'cod'].includes(paymentMethod)) {
       return res.status(400).json({ 
         message: 'Invalid payment method. Use "online" or "cod"' 
       });
     }
 
-    // Check Ekart serviceability before creating order - WITH ERROR HANDLING
-    let isServiceable = true;
-    let serviceabilityError = null;
-
+    // Check Ekart serviceability - NON-BLOCKING
+    let serviceabilityCheck = { serviceable: true, warning: null };
+    
     try {
       console.log('📍 Checking Ekart serviceability for pincode:', shippingAddress.pincode);
-      const serviceability = await EkartService.checkServiceability(shippingAddress.pincode);
+      serviceabilityCheck = await EkartService.checkServiceability(shippingAddress.pincode);
+      console.log('✅ Serviceability check result:', serviceabilityCheck);
       
-      if (serviceability && serviceability.forward_drop === false) {
-        isServiceable = false;
-        console.log('❌ Pincode not serviceable according to Ekart');
-      } else {
-        console.log('✅ Pincode is serviceable or serviceability check bypassed');
+      // Only block if explicitly not serviceable (not on API failure)
+      if (serviceabilityCheck.serviceable === false && !serviceabilityCheck.error) {
+        return res.status(400).json({
+          message: 'Sorry, we do not deliver to this pincode. Please check your shipping address.',
+          pincode: shippingAddress.pincode
+        });
       }
-    } catch (serviceabilityError) {
-      console.error('❌ Serviceability check failed, but continuing:', serviceabilityError.message);
-      // Continue with order even if serviceability check fails
-      isServiceable = true;
-      serviceabilityError = serviceabilityError.message;
-    }
-
-    if (!isServiceable) {
-      return res.status(400).json({
-        message: 'Sorry, we do not deliver to this pincode. Please check your shipping address.'
-      });
+    } catch (serviceError) {
+      console.error('❌ Serviceability check error (non-blocking):', serviceError.message);
+      serviceabilityCheck.warning = 'Serviceability check unavailable, proceeding with order';
     }
 
     // Get user's cart
@@ -190,7 +183,8 @@ router.post('/create', protectCustomer, async (req, res) => {
           sessionId: stripeResponse.session_id,
           checkoutUrl: stripeResponse.url,
           orderAmount: finalAmount,
-          currency: stripeResponse.currency
+          currency: stripeResponse.currency,
+          serviceabilityWarning: serviceabilityCheck.warning
         });
 
       } catch (stripeError) {
@@ -211,6 +205,26 @@ router.post('/create', protectCustomer, async (req, res) => {
       order.orderStatus = 'confirmed';
       await order.save();
 
+      // Automatically create Ekart shipment for COD orders
+      try {
+        console.log('🚚 Creating Ekart shipment for COD order...');
+        const ekartResponse = await EkartService.createShipment(
+          order,
+          order.shippingAddress,
+          order.items
+        );
+
+        order.ekartTrackingId = ekartResponse.tracking_id;
+        order.ekartShipmentData = ekartResponse.raw_response;
+        order.ekartAWB = ekartResponse.awb_number;
+        await order.save();
+
+        console.log('✅ Ekart shipment created for COD order');
+      } catch (ekartError) {
+        console.error('❌ Ekart shipment creation failed for COD:', ekartError.message);
+        // Don't fail the order if shipment creation fails
+      }
+
       // Clear cart for COD orders
       await Cart.findOneAndUpdate(
         { user: userId },
@@ -223,7 +237,9 @@ router.post('/create', protectCustomer, async (req, res) => {
         orderId: order.orderId,
         message: 'Order placed successfully with Cash on Delivery',
         orderAmount: finalAmount,
-        paymentMethod: 'cod'
+        paymentMethod: 'cod',
+        trackingId: order.ekartTrackingId,
+        serviceabilityWarning: serviceabilityCheck.warning
       });
     }
 
@@ -275,7 +291,7 @@ router.post('/create-shipment/:orderId', protectCustomer, async (req, res) => {
 
     // Update order with Ekart tracking details
     order.ekartTrackingId = ekartResponse.tracking_id;
-    order.ekartShipmentData = ekartResponse;
+    order.ekartShipmentData = ekartResponse.raw_response;
     order.ekartAWB = ekartResponse.awb_number;
     order.orderStatus = 'confirmed';
     await order.save();
@@ -331,6 +347,7 @@ router.get('/verify-payment/:sessionId', protectCustomer, async (req, res) => {
 
       // Automatically create Ekart shipment for successful online payments
       try {
+        console.log('🚚 Creating Ekart shipment for online order...');
         const ekartResponse = await EkartService.createShipment(
           order,
           order.shippingAddress,
@@ -338,7 +355,7 @@ router.get('/verify-payment/:sessionId', protectCustomer, async (req, res) => {
         );
 
         order.ekartTrackingId = ekartResponse.tracking_id;
-        order.ekartShipmentData = ekartResponse;
+        order.ekartShipmentData = ekartResponse.raw_response;
         order.ekartAWB = ekartResponse.awb_number;
         await order.save();
 
@@ -372,7 +389,7 @@ router.get('/verify-payment/:sessionId', protectCustomer, async (req, res) => {
   }
 });
 
-// Track shipment with Ekart
+// Track shipment with Ekart - FIXED
 router.get('/track/:orderId', protectCustomer, async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -386,8 +403,11 @@ router.get('/track/:orderId', protectCustomer, async (req, res) => {
     }
 
     if (!order.ekartTrackingId) {
-      return res.status(400).json({ 
-        message: 'No tracking information available yet. Shipment not created.' 
+      return res.status(200).json({ 
+        orderId: order.orderId,
+        orderStatus: order.orderStatus,
+        message: 'Shipment is being prepared. Tracking information will be available soon.',
+        trackingAvailable: false
       });
     }
 
@@ -397,8 +417,10 @@ router.get('/track/:orderId', protectCustomer, async (req, res) => {
     res.json({
       orderId: order.orderId,
       trackingId: order.ekartTrackingId,
+      awb: order.ekartAWB,
       orderStatus: order.orderStatus,
       trackingInfo: trackingInfo,
+      trackingAvailable: true,
       publicTrackingUrl: `https://app.elite.ekartlogistics.in/track/${order.ekartTrackingId}`
     });
 
@@ -460,7 +482,7 @@ router.put('/cancel/:orderId', protectCustomer, async (req, res) => {
   }
 });
 
-// Check serviceability for pincode - FIXED VERSION
+// Check serviceability for pincode - FIXED
 router.get('/serviceability/:pincode', async (req, res) => {
   try {
     const { pincode } = req.params;
@@ -477,23 +499,27 @@ router.get('/serviceability/:pincode', async (req, res) => {
 
     console.log('📍 Serviceability result:', serviceability);
 
-    // Always return serviceable for testing
     res.json({
       pincode,
-      serviceable: true, // Force true for testing
-      details: serviceability,
-      message: serviceability.forward_drop === false ? 
-        'Note: Ekart indicates limited serviceability, but order will proceed.' : 
-        'Service available'
+      serviceable: serviceability.serviceable,
+      codAvailable: serviceability.cod_available,
+      prepaidAvailable: serviceability.prepaid_available,
+      maxCodAmount: serviceability.max_cod_amount,
+      estimatedDeliveryDays: serviceability.estimated_delivery_days,
+      message: serviceability.serviceable ? 'Delivery available to this pincode' : 'Delivery not available to this pincode',
+      warning: serviceability.warning
     });
-
   } catch (error) {
     console.error('❌ Serviceability check error:', error);
-    
-    // Even if serviceability check fails, allow the order to proceed
+
+    // Return serviceable even on error
     res.json({
       pincode: req.params.pincode,
-      serviceable: true, // Force true even on error
+      serviceable: true,
+      codAvailable: true,
+      prepaidAvailable: true,
+      maxCodAmount: 50000,
+      estimatedDeliveryDays: 3,
       warning: 'Serviceability check temporarily unavailable. Your order will proceed.',
       error: error.message
     });
@@ -519,17 +545,13 @@ router.post('/shipping-rates', protectCustomer, async (req, res) => {
     );
 
     res.json(rates);
-
   } catch (error) {
     console.error('❌ Shipping rates error:', error);
-    res.status(500).json({ 
-      message: 'Failed to get shipping rates', 
-      error: error.message 
-    });
+    res.status(500).json({ message: 'Failed to get shipping rates', error: error.message });
   }
 });
 
-// Get All User Orders (updated to include Ekart tracking)
+// Get All User Orders
 router.get('/my-orders', protectCustomer, async (req, res) => {
   try {
     const userId = req.user._id;
@@ -561,7 +583,7 @@ router.get('/my-orders', protectCustomer, async (req, res) => {
   }
 });
 
-// Get Single Order Details (updated to include Ekart info)
+// Get Single Order Details - FIXED
 router.get('/:orderId', protectCustomer, async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -581,6 +603,11 @@ router.get('/:orderId', protectCustomer, async (req, res) => {
         trackingInfo = await EkartService.trackShipment(order.ekartTrackingId);
       } catch (trackError) {
         console.error('Error fetching tracking info:', trackError.message);
+        trackingInfo = {
+          tracking_id: order.ekartTrackingId,
+          current_status: 'Tracking information unavailable',
+          error: trackError.message
+        };
       }
     }
 
@@ -591,7 +618,6 @@ router.get('/:orderId', protectCustomer, async (req, res) => {
         ? `https://app.elite.ekartlogistics.in/track/${order.ekartTrackingId}`
         : null
     });
-
   } catch (error) {
     console.error('❌ Get order details error:', error);
     res.status(500).json({ message: 'Failed to fetch order details', error: error.message });

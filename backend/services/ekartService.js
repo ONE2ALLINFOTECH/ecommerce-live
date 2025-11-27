@@ -34,8 +34,11 @@ class EkartService {
 
       if (response.data && response.data.access_token) {
         this.accessToken = response.data.access_token;
-        this.tokenExpiry = Date.now() + (response.data.expires_in * 1000);
+        // Set expiry with 5 minute buffer
+        const expiresIn = response.data.expires_in || 3600;
+        this.tokenExpiry = Date.now() + ((expiresIn - 300) * 1000);
         console.log('✅ Ekart authentication successful');
+        console.log('🔑 Token expires in:', expiresIn, 'seconds');
         return this.accessToken;
       } else {
         throw new Error('Invalid authentication response from Ekart');
@@ -52,7 +55,9 @@ class EkartService {
   }
 
   async getAccessToken() {
-    if (!this.accessToken || Date.now() >= this.tokenExpiry) {
+    // Check if token exists and is not expired
+    if (!this.accessToken || !this.tokenExpiry || Date.now() >= this.tokenExpiry) {
+      console.log('🔄 Token expired or missing, re-authenticating...');
       await this.authenticate();
     }
     return this.accessToken;
@@ -78,6 +83,9 @@ class EkartService {
 
       const headers = await this.createHeaders();
 
+      // Calculate weight properly
+      const totalWeight = this.calculateTotalWeight(items);
+
       // Prepare shipment payload according to Ekart API
       const shipmentPayload = {
         seller_name: process.env.SELLER_NAME || "ONE2ALL RECHARGE PRIVATE LIMITED",
@@ -89,17 +97,17 @@ class EkartService {
         invoice_date: new Date().toISOString().split('T')[0],
         document_number: orderData.orderId,
         document_date: new Date().toISOString().split('T')[0],
-        products_desc: items.map(item => item.name).join(', ').substring(0, 100), // Limit length
+        products_desc: items.map(item => item.name).join(', ').substring(0, 100),
         payment_mode: orderData.paymentMethod === 'cod' ? 'COD' : 'Prepaid',
         category_of_goods: 'GENERAL',
         hsn_code: '',
-        total_amount: orderData.finalAmount,
+        total_amount: parseFloat(orderData.finalAmount),
         tax_value: 0,
-        taxable_amount: orderData.finalAmount,
-        commodity_value: orderData.finalAmount.toString(),
-        cod_amount: orderData.paymentMethod === 'cod' ? orderData.finalAmount : 0,
+        taxable_amount: parseFloat(orderData.finalAmount),
+        commodity_value: parseFloat(orderData.finalAmount).toString(),
+        cod_amount: orderData.paymentMethod === 'cod' ? parseFloat(orderData.finalAmount) : 0,
         quantity: items.reduce((sum, item) => sum + item.quantity, 0),
-        weight: this.calculateTotalWeight(items),
+        weight: totalWeight,
         length: 15,
         width: 15,
         height: 15,
@@ -143,7 +151,16 @@ class EkartService {
       );
 
       console.log('✅ Ekart shipment created successfully:', response.data);
-      return response.data;
+      
+      // Return normalized response
+      return {
+        tracking_id: response.data.tracking_id || response.data.trackingId || response.data.reference_number,
+        awb_number: response.data.awb_number || response.data.awb || response.data.tracking_id,
+        label_url: response.data.label_url || response.data.labelUrl,
+        status: response.data.status || 'created',
+        message: response.data.message || 'Shipment created successfully',
+        raw_response: response.data
+      };
 
     } catch (error) {
       console.error('❌ Ekart shipment creation failed:', {
@@ -162,20 +179,29 @@ class EkartService {
 
       const headers = await this.createHeaders();
 
-      const response = await axios.delete(
+      const response = await axios.post(
         `${this.baseURL}/api/v1/package/cancel`,
+        { 
+          tracking_id: trackingId 
+        },
         {
           headers,
-          data: { tracking_id: trackingId },
           timeout: 30000
         }
       );
 
-      console.log('✅ Ekart shipment cancelled successfully');
+      console.log('✅ Ekart shipment cancelled successfully:', response.data);
       return response.data;
 
     } catch (error) {
       console.error('❌ Ekart shipment cancellation failed:', error.response?.data || error.message);
+      
+      // Don't throw error if shipment is already cancelled or not found
+      if (error.response?.status === 404 || error.response?.data?.message?.includes('not found')) {
+        console.log('⚠️ Shipment not found or already cancelled');
+        return { success: true, message: 'Shipment not found or already cancelled' };
+      }
+      
       throw new Error(`Shipment cancellation failed: ${error.response?.data?.message || error.message}`);
     }
   }
@@ -188,20 +214,51 @@ class EkartService {
       const headers = await this.createHeaders();
 
       const response = await axios.get(
-        `${this.baseURL}/api/v1/package/track`,
+        `${this.baseURL}/api/v1/package/track/${trackingId}`,
         {
           headers,
-          params: { tracking_id: trackingId },
           timeout: 30000
         }
       );
 
-      return response.data;
+      console.log('📊 Tracking response:', response.data);
+
+      // Normalize tracking response
+      const trackingData = response.data;
+      return {
+        tracking_id: trackingId,
+        current_status: trackingData.current_status || trackingData.status || 'In Transit',
+        shipment_status: trackingData.shipment_status || trackingData.status,
+        scans: this.normalizeScans(trackingData.scans || trackingData.tracking_data || []),
+        estimated_delivery: trackingData.estimated_delivery_date || trackingData.edd,
+        awb: trackingData.awb_number || trackingData.awb,
+        raw_data: trackingData
+      };
 
     } catch (error) {
       console.error('❌ Ekart tracking failed:', error.response?.data || error.message);
-      throw new Error(`Tracking failed: ${error.response?.data?.message || error.message}`);
+      
+      // Return basic tracking info even if API fails
+      return {
+        tracking_id: trackingId,
+        current_status: 'Tracking information unavailable',
+        shipment_status: 'pending',
+        scans: [],
+        error: error.message
+      };
     }
+  }
+
+  // Normalize scan data
+  normalizeScans(scans) {
+    if (!Array.isArray(scans)) return [];
+    
+    return scans.map(scan => ({
+      status: scan.scan_type || scan.status || scan.activity,
+      location: scan.location || scan.scan_location || 'N/A',
+      timestamp: scan.scan_datetime || scan.timestamp || scan.date,
+      remarks: scan.remarks || scan.instructions || ''
+    }));
   }
 
   // Get shipping rates
@@ -239,16 +296,23 @@ class EkartService {
 
     } catch (error) {
       console.error('❌ Shipping rates fetch failed:', error.response?.data || error.message);
-      throw new Error(`Shipping rates fetch failed: ${error.response?.data?.message || error.message}`);
+      
+      // Return default rates if API fails
+      return {
+        success: false,
+        message: 'Unable to fetch rates, using default',
+        freight_charge: 50,
+        cod_charge: codAmount > 0 ? 30 : 0,
+        total_charge: codAmount > 0 ? 80 : 50
+      };
     }
   }
 
-  // Check serviceability - FIXED VERSION
+  // Check serviceability - IMPROVED VERSION
   async checkServiceability(pincode) {
     try {
       console.log('📍 Checking serviceability for pincode:', pincode);
 
-      // First get authentication token
       const headers = await this.createHeaders();
 
       console.log('🔑 Headers for serviceability:', headers);
@@ -263,28 +327,35 @@ class EkartService {
 
       console.log('📍 Serviceability response:', response.data);
 
-      return response.data;
+      // Normalize response
+      const serviceData = response.data;
+      return {
+        serviceable: serviceData.forward_drop !== false && serviceData.serviceable !== false,
+        cod_available: serviceData.cod_available || serviceData.max_cod_amount > 0,
+        prepaid_available: serviceData.prepaid_available !== false,
+        max_cod_amount: serviceData.max_cod_amount || 50000,
+        estimated_delivery_days: serviceData.delivery_days || serviceData.edd_days || 3,
+        raw_data: serviceData
+      };
 
     } catch (error) {
       console.error('❌ Serviceability check failed:', {
         message: error.message,
         response: error.response?.data,
-        status: error.response?.status,
-        config: {
-          url: error.config?.url,
-          method: error.config?.method
-        }
+        status: error.response?.status
       });
 
-      // If serviceability fails, return a default response for testing
-      console.log('🔄 Returning default serviceability response for testing');
+      // IMPORTANT: Return serviceable = true to allow order processing
+      // This ensures orders aren't blocked due to API issues
+      console.log('🔄 Returning default serviceable response (API unavailable)');
       return {
-        status: "success",
+        serviceable: true,
+        cod_available: true,
+        prepaid_available: true,
         max_cod_amount: 50000,
-        forward_pickup: true,
-        forward_drop: true,
-        reverse_pickup: true,
-        reverse_drop: true
+        estimated_delivery_days: 3,
+        warning: 'Serviceability check temporarily unavailable',
+        error: error.message
       };
     }
   }
@@ -292,7 +363,9 @@ class EkartService {
   // Helper method to calculate total weight
   calculateTotalWeight(items) {
     const totalItems = items.reduce((sum, item) => sum + item.quantity, 0);
-    return Math.max(totalItems * 500, 1000); // Minimum 1kg
+    // Assume 500g per item, minimum 1kg (1000g)
+    const calculatedWeight = totalItems * 500;
+    return Math.max(calculatedWeight, 1000);
   }
 }
 

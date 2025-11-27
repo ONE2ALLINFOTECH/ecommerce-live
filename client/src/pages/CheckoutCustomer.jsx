@@ -23,42 +23,57 @@ const CheckoutCustomer = () => {
     landmark: '',
     alternatePhone: ''
   });
-  const [pincodeServiceable, setPincodeServiceable] = useState(true);
-  const [checkingServiceability, setCheckingServiceability] = useState(false);
-  const [serviceabilityMessage, setServiceabilityMessage] = useState('');
+  const [serviceabilityData, setServiceabilityData] = useState({
+    serviceable: true,
+    checking: false,
+    message: '',
+    warning: null
+  });
 
   const discount = Math.round(totalAmount * 0.3);
   const shippingCharge = 29;
   const finalAmount = totalAmount - discount + shippingCharge;
 
-  // Check serviceability when pincode changes - FIXED VERSION
+  // Check serviceability when pincode changes
   useEffect(() => {
     const checkServiceability = async () => {
       if (address.pincode && address.pincode.length === 6) {
-        setCheckingServiceability(true);
+        setServiceabilityData(prev => ({ ...prev, checking: true }));
+        
         try {
           const { data } = await API.get(`/orders/serviceability/${address.pincode}`);
           console.log('📍 Serviceability API response:', data);
           
-          // Set serviceability based on API response
-          setPincodeServiceable(data.serviceable);
-          setServiceabilityMessage(data.message || (data.serviceable ? 'Delivery available to this pincode' : 'Delivery not available to this pincode'));
+          setServiceabilityData({
+            serviceable: data.serviceable,
+            checking: false,
+            message: data.message,
+            warning: data.warning,
+            codAvailable: data.codAvailable,
+            prepaidAvailable: data.prepaidAvailable
+          });
           
         } catch (error) {
           console.error('Serviceability check failed:', error);
-          // Even if API fails, allow the order to proceed
-          setPincodeServiceable(true);
-          setServiceabilityMessage('Service check temporarily unavailable. Order will proceed.');
-        } finally {
-          setCheckingServiceability(false);
+          // Allow order to proceed even if check fails
+          setServiceabilityData({
+            serviceable: true,
+            checking: false,
+            message: 'Service check temporarily unavailable. Your order will proceed.',
+            warning: 'Unable to verify serviceability'
+          });
         }
       } else {
-        setPincodeServiceable(true);
-        setServiceabilityMessage('');
+        setServiceabilityData({
+          serviceable: true,
+          checking: false,
+          message: '',
+          warning: null
+        });
       }
     };
 
-    const timeoutId = setTimeout(checkServiceability, 1000);
+    const timeoutId = setTimeout(checkServiceability, 800);
     return () => clearTimeout(timeoutId);
   }, [address.pincode]);
 
@@ -118,11 +133,6 @@ const CheckoutCustomer = () => {
       return;
     }
 
-    if (!pincodeServiceable) {
-      alert('Sorry, we do not deliver to this pincode. Please check your shipping address.');
-      return;
-    }
-
     if (!paymentMethod) {
       alert('Please select a payment method');
       return;
@@ -156,7 +166,8 @@ const CheckoutCustomer = () => {
           state: { 
             orderId: data.orderId,
             amount: data.orderAmount,
-            paymentMethod: 'cod'
+            paymentMethod: 'cod',
+            trackingId: data.trackingId
           }
         });
       }
@@ -262,6 +273,7 @@ const CheckoutCustomer = () => {
                       onChange={handleInputChange}
                       placeholder="10-digit mobile number *"
                       required
+                      maxLength={10}
                       className="w-full px-4 py-3 border border-gray-300 rounded text-sm focus:outline-none focus:border-blue-500"
                     />
                   </div>
@@ -276,20 +288,20 @@ const CheckoutCustomer = () => {
                       maxLength={6}
                       className={`w-full px-4 py-3 border rounded text-sm focus:outline-none focus:border-blue-500 ${
                         address.pincode.length === 6
-                          ? pincodeServiceable
+                          ? serviceabilityData.serviceable
                             ? 'border-green-500 bg-green-50'
                             : 'border-red-500 bg-red-50'
                           : 'border-gray-300'
                       }`}
                     />
-                    {checkingServiceability && (
+                    {serviceabilityData.checking && (
                       <div className="absolute right-3 top-3">
                         <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
                       </div>
                     )}
-                    {address.pincode.length === 6 && !checkingServiceability && (
+                    {address.pincode.length === 6 && !serviceabilityData.checking && (
                       <div className="absolute right-3 top-3">
-                        {pincodeServiceable ? (
+                        {serviceabilityData.serviceable ? (
                           <svg className="w-4 h-4 text-green-500" fill="currentColor" viewBox="0 0 20 20">
                             <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                           </svg>
@@ -312,14 +324,20 @@ const CheckoutCustomer = () => {
                       className="w-full px-4 py-3 border border-gray-300 rounded text-sm focus:outline-none focus:border-blue-500"
                     />
                   </div>
-                  {address.pincode.length === 6 && !checkingServiceability && serviceabilityMessage && (
+                  {address.pincode.length === 6 && !serviceabilityData.checking && serviceabilityData.message && (
                     <div className="col-span-2">
-                      <div className={`text-sm p-2 rounded ${
-                        pincodeServiceable 
-                          ? 'text-green-600 bg-green-50' 
-                          : 'text-red-600 bg-red-50'
+                      <div className={`text-sm p-3 rounded flex items-start ${
+                        serviceabilityData.serviceable 
+                          ? 'text-green-700 bg-green-50 border border-green-200' 
+                          : 'text-red-700 bg-red-50 border border-red-200'
                       }`}>
-                        {pincodeServiceable ? '✅' : '❌'} {serviceabilityMessage}
+                        <span className="mr-2">{serviceabilityData.serviceable ? '✅' : '❌'}</span>
+                        <div className="flex-1">
+                          <p className="font-medium">{serviceabilityData.message}</p>
+                          {serviceabilityData.warning && (
+                            <p className="text-xs mt-1 opacity-80">⚠️ {serviceabilityData.warning}</p>
+                          )}
+                        </div>
                       </div>
                     </div>
                   )}
@@ -373,6 +391,7 @@ const CheckoutCustomer = () => {
                       value={address.alternatePhone}
                       onChange={handleInputChange}
                       placeholder="Alternate Phone (Optional)"
+                      maxLength={10}
                       className="w-full px-4 py-3 border border-gray-300 rounded text-sm focus:outline-none focus:border-blue-500"
                     />
                   </div>
@@ -498,25 +517,28 @@ const CheckoutCustomer = () => {
               <div className="px-6 pb-6">
                 <button
                   onClick={handlePlaceOrder}
-                  disabled={loading || (!availablePaymentMethods.online && !availablePaymentMethods.cod) || !pincodeServiceable}
+                  disabled={loading || (!availablePaymentMethods.online && !availablePaymentMethods.cod)}
                   className={`w-full py-3 rounded font-semibold text-sm transition-colors shadow-md ${
-                    loading || (!availablePaymentMethods.online && !availablePaymentMethods.cod) || !pincodeServiceable
-                      ? 'bg-gray-400 text-gray-200 cursor-not-allowed'
+                    loading || (!availablePaymentMethods.online && !availablePaymentMethods.cod) 
+                      ? 'bg-gray-400 text-gray-200 cursor-not-allowed' 
                       : 'bg-orange-500 text-white hover:bg-orange-600'
                   }`}
                 >
                   {loading ? 'PROCESSING...' : 'CONTINUE'}
                 </button>
-                
-                {!pincodeServiceable && (
-                  <p className="text-red-600 text-xs mt-2 text-center">
-                    Delivery not available to this pincode
-                  </p>
-                )}
-                
+
                 {(!availablePaymentMethods.online && !availablePaymentMethods.cod) && (
                   <p className="text-red-600 text-xs mt-2 text-center">
                     No payment methods available for items in cart
+                  </p>
+                )}
+                
+                {serviceabilityData.warning && (
+                  <p className="text-yellow-600 text-xs mt-2 text-center flex items-center justify-center">
+                    <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                    </svg>
+                    {serviceabilityData.warning}
                   </p>
                 )}
               </div>
