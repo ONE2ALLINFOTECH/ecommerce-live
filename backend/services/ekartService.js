@@ -13,6 +13,8 @@ class EkartService {
   async authenticate() {
     try {
       console.log('🔐 Authenticating with Ekart...');
+      console.log('Client ID:', this.clientId);
+      console.log('Username:', this.username);
       
       const response = await axios.post(
         `${this.baseURL}/integrations/v2/auth/token/${this.clientId}`,
@@ -28,11 +30,14 @@ class EkartService {
         }
       );
 
+      console.log('🔐 Ekart Auth Response:', response.data);
+
       if (response.data && response.data.access_token) {
         this.accessToken = response.data.access_token;
         const expiresIn = response.data.expires_in || 3600;
         this.tokenExpiry = Date.now() + ((expiresIn - 300) * 1000);
         console.log('✅ Ekart authentication successful');
+        console.log('🔑 Token expires in:', expiresIn, 'seconds');
         return this.accessToken;
       } else {
         throw new Error('Invalid authentication response from Ekart');
@@ -40,7 +45,9 @@ class EkartService {
     } catch (error) {
       console.error('❌ Ekart authentication failed:', {
         message: error.message,
-        response: error.response?.data
+        response: error.response?.data,
+        status: error.response?.status,
+        headers: error.response?.headers
       });
       throw new Error(`Ekart authentication failed: ${error.response?.data?.message || error.message}`);
     }
@@ -67,69 +74,80 @@ class EkartService {
     }
   }
 
+  // ✅ FIXED: Create shipment with correct endpoint and payload
   async createShipment(orderData, shippingAddress, items) {
     try {
       console.log('🚚 Creating Ekart shipment for order:', orderData.orderId);
 
       const headers = await this.createHeaders();
+
+      // Calculate weight properly
       const totalWeight = this.calculateTotalWeight(items);
 
+      // ✅ CORRECT PAYLOAD STRUCTURE for Ekart Elite API v2
       const shipmentPayload = {
-        seller_name: process.env.SELLER_NAME || "ONE2ALL RECHARGE PRIVATE LIMITED",
-        seller_address: process.env.SELLER_ADDRESS || "RZ-13, SHIVPURI COLONY PHASE-1, DINDARPUR, NAJAFGARH, NEW DELHI, Delhi, DL, 110043",
-        seller_gst_tin: process.env.SELLER_GST_TIN || "07AACCO4657Q1ZS",
-        consignee_name: shippingAddress.name,
-        consignee_gst_tin: "",
-        invoice_number: orderData.orderId,
-        invoice_date: new Date().toISOString().split('T')[0],
-        document_number: orderData.orderId,
-        document_date: new Date().toISOString().split('T')[0],
-        products_desc: items.map(item => item.name).join(', ').substring(0, 100),
-        payment_mode: orderData.paymentMethod === 'cod' ? 'COD' : 'Prepaid',
-        category_of_goods: 'GENERAL',
-        hsn_code: '',
-        total_amount: parseFloat(orderData.finalAmount),
-        tax_value: 0,
-        taxable_amount: parseFloat(orderData.finalAmount),
-        commodity_value: parseFloat(orderData.finalAmount).toString(),
-        cod_amount: orderData.paymentMethod === 'cod' ? parseFloat(orderData.finalAmount) : 0,
-        quantity: items.reduce((sum, item) => sum + item.quantity, 0),
-        weight: totalWeight,
-        length: 15,
-        width: 15,
-        height: 15,
-        drop_location: {
-          location_type: "drop",
-          address: `${shippingAddress.address}, ${shippingAddress.locality}`,
+        // Seller Information
+        seller_details: {
+          name: process.env.SELLER_NAME || "ONE2ALL RECHARGE PRIVATE LIMITED",
+          gstin: process.env.SELLER_GST_TIN || "07AACCO4657Q1ZS",
+          address_line_1: process.env.SELLER_ADDRESS || "RZ-13, SHIVPURI COLONY PHASE-1",
+          address_line_2: "DINDARPUR, NAJAFGARH",
+          city: process.env.SELLER_CITY || "NEW DELHI",
+          state: process.env.SELLER_STATE || "Delhi",
+          pincode: process.env.SELLER_PINCODE || "110043",
+          country: "India"
+        },
+
+        // Customer Information
+        customer_details: {
+          name: shippingAddress.name,
+          phone: shippingAddress.mobile,
+          alternate_phone: shippingAddress.alternatePhone || "",
+          address_line_1: shippingAddress.address,
+          address_line_2: shippingAddress.locality,
+          landmark: shippingAddress.landmark || "",
           city: shippingAddress.city,
           state: shippingAddress.state,
-          country: "India",
           pincode: shippingAddress.pincode,
-          name: shippingAddress.name,
-          phone: shippingAddress.mobile
+          country: "India"
         },
-        pickup_location: {
-          location_type: "pickup",
-          address: process.env.SELLER_ADDRESS || "RZ-13, SHIVPURI COLONY PHASE-1, DINDARPUR, NAJAFGARH, NEW DELHI, Delhi, DL, 110043",
-          city: process.env.SELLER_CITY || "NEW DELHI",
-          state: process.env.SELLER_STATE || "Delhi",
-          country: "India",
-          pincode: process.env.SELLER_PINCODE || "110043"
+
+        // Order Information
+        order_details: {
+          reference_number: orderData.orderId, // Your order ID
+          order_date: new Date().toISOString().split('T')[0],
+          payment_mode: orderData.paymentMethod === 'cod' ? 'COD' : 'Prepaid',
+          total_amount: parseFloat(orderData.finalAmount),
+          cod_amount: orderData.paymentMethod === 'cod' ? parseFloat(orderData.finalAmount) : 0
         },
-        return_location: {
-          location_type: "return",
-          address: process.env.SELLER_ADDRESS || "RZ-13, SHIVPURI COLONY PHASE-1, DINDARPUR, NAJAFGARH, NEW DELHI, Delhi, DL, 110043",
-          city: process.env.SELLER_CITY || "NEW DELHI",
-          state: process.env.SELLER_STATE || "Delhi",
-          country: "India",
-          pincode: process.env.SELLER_PINCODE || "110043"
+
+        // Package Information
+        package_details: {
+          weight: totalWeight, // in grams
+          length: 15, // in cm
+          breadth: 15, // in cm
+          height: 15, // in cm
+          quantity: items.reduce((sum, item) => sum + item.quantity, 0),
+          description: items.map(item => item.name).join(', ').substring(0, 100),
+          category: 'GENERAL',
+          invoice_number: orderData.orderId,
+          invoice_date: new Date().toISOString().split('T')[0],
+          invoice_amount: parseFloat(orderData.finalAmount),
+          hsn_code: "" // Add if you have HSN codes
+        },
+
+        // Shipping Details
+        shipping_details: {
+          service_type: "SURFACE", // or "EXPRESS"
+          pickup_type: "WAREHOUSE" // or "DOORSTEP"
         }
       };
 
       console.log('📦 Ekart shipment payload:', JSON.stringify(shipmentPayload, null, 2));
 
+      // ✅ CORRECT ENDPOINT
       const response = await axios.post(
-        `${this.baseURL}/api/v1/package/create`,
+        `${this.baseURL}/integrations/v2/shipment/forward`,
         shipmentPayload,
         { 
           headers,
@@ -137,12 +155,13 @@ class EkartService {
         }
       );
 
-      console.log('✅ Ekart shipment created:', response.data);
+      console.log('✅ Ekart shipment created successfully:', response.data);
       
+      // Return normalized response
       return {
-        tracking_id: response.data.tracking_id || response.data.trackingId || response.data.reference_number,
-        awb_number: response.data.awb_number || response.data.awb || response.data.tracking_id,
-        label_url: response.data.label_url || response.data.labelUrl,
+        tracking_id: response.data.data?.tracking_id || response.data.tracking_id,
+        awb_number: response.data.data?.awb_number || response.data.awb,
+        label_url: response.data.data?.label_url || response.data.labelUrl,
         status: response.data.status || 'created',
         message: response.data.message || 'Shipment created successfully',
         raw_response: response.data
@@ -152,12 +171,15 @@ class EkartService {
       console.error('❌ Ekart shipment creation failed:', {
         message: error.message,
         response: error.response?.data,
-        status: error.response?.status
+        status: error.response?.status,
+        url: error.config?.url,
+        payload: error.config?.data
       });
       throw new Error(`Shipment creation failed: ${error.response?.data?.message || error.message}`);
     }
   }
 
+  // ✅ FIXED: Cancel shipment endpoint
   async cancelShipment(trackingId) {
     try {
       console.log('🗑️ Canceling Ekart shipment:', trackingId);
@@ -165,12 +187,17 @@ class EkartService {
       const headers = await this.createHeaders();
 
       const response = await axios.post(
-        `${this.baseURL}/api/v1/package/cancel`,
-        { tracking_id: trackingId },
-        { headers, timeout: 30000 }
+        `${this.baseURL}/integrations/v2/shipment/cancel`,
+        { 
+          tracking_id: trackingId 
+        },
+        {
+          headers,
+          timeout: 30000
+        }
       );
 
-      console.log('✅ Ekart shipment cancelled:', response.data);
+      console.log('✅ Ekart shipment cancelled successfully:', response.data);
       return response.data;
 
     } catch (error) {
@@ -185,6 +212,7 @@ class EkartService {
     }
   }
 
+  // ✅ FIXED: Track shipment endpoint
   async trackShipment(trackingId) {
     try {
       console.log('📊 Tracking Ekart shipment:', trackingId);
@@ -192,11 +220,16 @@ class EkartService {
       const headers = await this.createHeaders();
 
       const response = await axios.get(
-        `${this.baseURL}/api/v1/package/track/${trackingId}`,
-        { headers, timeout: 30000 }
+        `${this.baseURL}/integrations/v2/track/${trackingId}`,
+        {
+          headers,
+          timeout: 30000
+        }
       );
 
-      const trackingData = response.data;
+      console.log('📊 Tracking response:', response.data);
+
+      const trackingData = response.data.data || response.data;
       return {
         tracking_id: trackingId,
         current_status: trackingData.current_status || trackingData.status || 'In Transit',
@@ -231,6 +264,54 @@ class EkartService {
     }));
   }
 
+  // ✅ FIXED: Serviceability check endpoint
+  async checkServiceability(pincode) {
+    try {
+      console.log('📍 Checking serviceability for pincode:', pincode);
+
+      const headers = await this.createHeaders();
+
+      const response = await axios.get(
+        `${this.baseURL}/integrations/v2/serviceability/${pincode}`,
+        { 
+          headers,
+          timeout: 30000 
+        }
+      );
+
+      console.log('📍 Serviceability response:', response.data);
+
+      const serviceData = response.data.data || response.data;
+      return {
+        serviceable: serviceData.serviceable !== false && serviceData.forward_drop !== false,
+        cod_available: serviceData.cod_available || serviceData.max_cod_amount > 0,
+        prepaid_available: serviceData.prepaid_available !== false,
+        max_cod_amount: serviceData.max_cod_amount || 50000,
+        estimated_delivery_days: serviceData.delivery_days || serviceData.edd_days || 3,
+        raw_data: serviceData
+      };
+
+    } catch (error) {
+      console.error('❌ Serviceability check failed:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status
+      });
+
+      console.log('🔄 Returning default serviceable response (API unavailable)');
+      return {
+        serviceable: true,
+        cod_available: true,
+        prepaid_available: true,
+        max_cod_amount: 50000,
+        estimated_delivery_days: 3,
+        warning: 'Serviceability check temporarily unavailable',
+        error: error.message
+      };
+    }
+  }
+
+  // ✅ FIXED: Shipping rates endpoint
   async getShippingRates(pickupPincode, deliveryPincode, weight, codAmount = 0) {
     try {
       console.log('💰 Getting shipping rates...');
@@ -238,17 +319,23 @@ class EkartService {
       const headers = await this.createHeaders();
 
       const ratePayload = {
-        pickupPincode: parseInt(pickupPincode),
-        deliveryPincode: parseInt(deliveryPincode),
-        codAmount: codAmount,
-        serviceType: "SURFACE",
-        packages: [{ weight, length: 15, width: 15, height: 15 }]
+        pickup_pincode: parseInt(pickupPincode),
+        delivery_pincode: parseInt(deliveryPincode),
+        cod_amount: codAmount,
+        weight: weight,
+        length: 15,
+        breadth: 15,
+        height: 15,
+        payment_mode: codAmount > 0 ? "COD" : "Prepaid"
       };
 
       const response = await axios.post(
-        `${this.baseURL}/data/pricing/estimate`,
+        `${this.baseURL}/integrations/v2/calculator/rate`,
         ratePayload,
-        { headers, timeout: 30000 }
+        { 
+          headers,
+          timeout: 30000 
+        }
       );
 
       return response.data;
@@ -266,47 +353,9 @@ class EkartService {
     }
   }
 
-  async checkServiceability(pincode) {
-    try {
-      console.log('📍 Checking serviceability for pincode:', pincode);
-
-      const headers = await this.createHeaders();
-
-      const response = await axios.get(
-        `${this.baseURL}/api/v2/serviceability/${pincode}`,
-        { headers, timeout: 30000 }
-      );
-
-      const serviceData = response.data;
-      return {
-        serviceable: serviceData.forward_drop !== false && serviceData.serviceable !== false,
-        cod_available: serviceData.cod_available || serviceData.max_cod_amount > 0,
-        prepaid_available: serviceData.prepaid_available !== false,
-        max_cod_amount: serviceData.max_cod_amount || 50000,
-        estimated_delivery_days: serviceData.delivery_days || serviceData.edd_days || 3,
-        raw_data: serviceData
-      };
-
-    } catch (error) {
-      console.error('❌ Serviceability check failed:', {
-        message: error.message,
-        response: error.response?.data
-      });
-
-      return {
-        serviceable: true,
-        cod_available: true,
-        prepaid_available: true,
-        max_cod_amount: 50000,
-        estimated_delivery_days: 3,
-        warning: 'Serviceability check temporarily unavailable',
-        error: error.message
-      };
-    }
-  }
-
   calculateTotalWeight(items) {
     const totalItems = items.reduce((sum, item) => sum + item.quantity, 0);
+    // 500g per item, minimum 1kg (1000g)
     const calculatedWeight = totalItems * 500;
     return Math.max(calculatedWeight, 1000);
   }
