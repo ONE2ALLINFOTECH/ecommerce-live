@@ -1,3 +1,8 @@
+
+
+
+
+
 const axios = require('axios');
 
 class EkartService {
@@ -71,7 +76,7 @@ class EkartService {
     }
   }
 
-  // ✅ FIXED: Now using PICKUP_LOCATION_NAME from .env
+  // ✅ CORRECT EKART API V1 PAYLOAD - AS PER OFFICIAL DOCS
   async createShipment(orderData, shippingAddress, items) {
     try {
       console.log('🚚 Creating Ekart shipment for order:', orderData.orderId);
@@ -88,50 +93,43 @@ class EkartService {
       const totalWeight = this.calculateTotalWeight(items);
       const totalQuantity = items.reduce((sum, item) => sum + item.quantity, 0);
 
-      // ✅ CRITICAL FIX: Get both names from .env
-      const SELLER_NAME = process.env.SELLER_NAME || "ONE2ALL RECHARGE PRIVATE LIMITED";
-      const PICKUP_LOCATION_NAME = process.env.PICKUP_LOCATION_NAME || "SHOPYMOL ( A UNIT OF ONE2ALL RECHARGE PRIVATE LIMITED )";
-
-      console.log('🏢 Seller Name (Company):', SELLER_NAME);
-      console.log('📍 Pickup Location Name (Warehouse):', PICKUP_LOCATION_NAME);
-
-      // ✅ CORRECT PAYLOAD STRUCTURE for Ekart V1 API
+      // ✅ CORRECT PAYLOAD STRUCTURE for Ekart V1 API (as per official docs)
       const shipmentPayload = {
-        // Seller Information - Company name
-        seller_name: SELLER_NAME,
-        seller_address: process.env.SELLER_ADDRESS || "RZ-13, SHIVPURI COLONY PHASE-1, DINDARPUR, NAJAFGARH",
+        // Seller Information - REQUIRED
+        seller_name: process.env.SELLER_NAME || "ONE2ALL RECHARGE PRIVATE LIMITED",
+        seller_address: process.env.SELLER_ADDRESS || "RZ-13, SHIVPURI COLONY PHASE-1, DINDARPUR, NAJAFGARH, NEW DELHI, Delhi, DL, 110043",
         seller_gst_tin: process.env.SELLER_GST_TIN || "07AACCO4657Q1ZS",
         
-        // Order Details
+        // Order Details - REQUIRED
         order_number: orderData.orderId,
         invoice_number: orderData.orderId,
         invoice_date: new Date().toISOString().split('T')[0],
         
-        // Consignee Information
+        // Consignee Information - REQUIRED
         consignee_name: shippingAddress.name,
         
-        // Payment Details
+        // Payment Details - REQUIRED
         payment_mode: orderData.paymentMethod === 'cod' ? 'COD' : 'Prepaid',
         cod_amount: orderData.paymentMethod === 'cod' ? parseFloat(orderData.finalAmount) : 0,
         
-        // Product Details
+        // Product Details - REQUIRED
         category_of_goods: "General",
         products_desc: items.map(item => item.name).join(', ').substring(0, 100),
         
-        // Amount Details
+        // Amount Details - REQUIRED
         total_amount: parseFloat(orderData.finalAmount),
-        tax_value: parseFloat((orderData.finalAmount * 0.18).toFixed(2)),
+        tax_value: parseFloat((orderData.finalAmount * 0.18).toFixed(2)), // 18% GST
         taxable_amount: parseFloat((orderData.finalAmount / 1.18).toFixed(2)),
         commodity_value: (orderData.finalAmount / 1.18).toFixed(2),
         
-        // Package Details
+        // Package Details - REQUIRED
         quantity: totalQuantity,
-        weight: totalWeight,
-        length: 15,
+        weight: totalWeight, // in grams
+        length: 15, // in cm
         height: 15,
         width: 15,
         
-        // Drop Location (Customer Address)
+        // Drop Location (Customer Address) - REQUIRED
         drop_location: {
           name: shippingAddress.name,
           phone: formatPhone(shippingAddress.mobile),
@@ -142,9 +140,9 @@ class EkartService {
           country: "India"
         },
         
-        // ✅ CRITICAL: Pickup Location - MUST use PICKUP_LOCATION_NAME (registered in dashboard)
+        // Pickup Location (Seller Address) - REQUIRED
         pickup_location: {
-          name: PICKUP_LOCATION_NAME,  // ← This is the FIX!
+          name: process.env.SELLER_NAME || "ONE2ALL RECHARGE PRIVATE LIMITED",
           phone: formatPhone(process.env.SELLER_PHONE || "7303424343"),
           pin: parseInt(process.env.SELLER_PINCODE || "110043"),
           address: process.env.SELLER_ADDRESS || "RZ-13, SHIVPURI COLONY PHASE-1, DINDARPUR, NAJAFGARH",
@@ -153,10 +151,10 @@ class EkartService {
           country: "India"
         },
         
-        // ✅ CRITICAL: Return Location - MUST use PICKUP_LOCATION_NAME (registered in dashboard)
+        // Return Location (same as pickup) - REQUIRED
         return_location: {
-          name: PICKUP_LOCATION_NAME,  // ← This is the FIX!
-          phone: formatPhone(process.env.SELLER_PHONE || "7303424343"),
+          name: process.env.SELLER_NAME || "ONE2ALL RECHARGE PRIVATE LIMITED",
+          phone: formatPhone(process.env.SELLER_PHONE || "9634756593"),
           pin: parseInt(process.env.SELLER_PINCODE || "110043"),
           address: process.env.SELLER_ADDRESS || "RZ-13, SHIVPURI COLONY PHASE-1, DINDARPUR, NAJAFGARH",
           city: process.env.SELLER_CITY || "NEW DELHI",
@@ -166,9 +164,6 @@ class EkartService {
       };
 
       console.log('📦 Ekart shipment payload:');
-      console.log('  - Seller Name:', shipmentPayload.seller_name);
-      console.log('  - Pickup Location Name:', shipmentPayload.pickup_location.name);
-      console.log('  - Return Location Name:', shipmentPayload.return_location.name);
       console.log('  - Order Number:', shipmentPayload.order_number);
       console.log('  - Drop City:', shipmentPayload.drop_location.city);
       console.log('  - Drop Pincode:', shipmentPayload.drop_location.pin);
@@ -176,6 +171,7 @@ class EkartService {
       console.log('  - COD Amount:', shipmentPayload.cod_amount);
       console.log('  - Weight:', shipmentPayload.weight + 'g');
 
+      // ✅ CORRECT ENDPOINT - /api/v1/package/create (as per official docs)
       const response = await axios.put(
         `${this.baseURL}/api/v1/package/create`,
         shipmentPayload,
@@ -194,8 +190,11 @@ class EkartService {
         data: response.data
       });
 
+      // Check response
       if (response.status >= 200 && response.status < 300 && response.data.status === true) {
         const data = response.data;
+        
+        // Extract tracking ID from response (as per official docs)
         const trackingId = data.tracking_id;
         const awbNumber = data.barcodes?.wbn || trackingId;
 
@@ -220,8 +219,9 @@ class EkartService {
           throw new Error('No tracking ID received from Ekart');
         }
       } else {
+        // API returned error
         console.error('❌ Ekart API Error Response:', response.data);
-        const errorMsg = response.data?.description || response.data?.remark || response.data?.message || 'Shipment creation failed';
+        const errorMsg = response.data?.remark || response.data?.message || 'Shipment creation failed';
         throw new Error(errorMsg);
       }
 
@@ -233,12 +233,12 @@ class EkartService {
       });
       
       let errorMessage = 'Shipment creation failed: ';
-      if (error.response?.data?.description) {
-        errorMessage += error.response.data.description;
-      } else if (error.response?.data?.remark) {
+      if (error.response?.data?.remark) {
         errorMessage += error.response.data.remark;
       } else if (error.response?.data?.message) {
         errorMessage += error.response.data.message;
+      } else if (error.response?.data) {
+        errorMessage += JSON.stringify(error.response.data);
       } else {
         errorMessage += error.message;
       }
@@ -247,6 +247,7 @@ class EkartService {
     }
   }
 
+  // Cancel shipment - CORRECT ENDPOINT
   async cancelShipment(trackingId) {
     try {
       console.log('🗑️ Canceling Ekart shipment:', trackingId);
@@ -283,13 +284,17 @@ class EkartService {
     }
   }
 
+  // Track shipment - CORRECT ENDPOINT
   async trackShipment(trackingId) {
     try {
       console.log('📊 Tracking Ekart shipment:', trackingId);
 
+      // ✅ This is a PUBLIC API - No authentication required
       const response = await axios.get(
         `${this.baseURL}/api/v1/track/${trackingId}`,
-        { timeout: 30000 }
+        {
+          timeout: 30000
+        }
       );
 
       const data = response.data;
@@ -319,6 +324,7 @@ class EkartService {
     }
   }
 
+  // Normalize scan data - AS PER API RESPONSE
   normalizeScans(scans) {
     if (!Array.isArray(scans)) return [];
     
@@ -330,6 +336,7 @@ class EkartService {
     }));
   }
 
+  // Check serviceability - CORRECT ENDPOINT
   async checkServiceability(pincode) {
     try {
       console.log('📍 Checking serviceability for:', pincode);
@@ -383,12 +390,14 @@ class EkartService {
     }
   }
 
+  // Calculate weight
   calculateTotalWeight(items) {
     const totalItems = items.reduce((sum, item) => sum + item.quantity, 0);
-    const calculatedWeight = totalItems * 500;
-    return Math.max(calculatedWeight, 1000);
+    const calculatedWeight = totalItems * 500; // 500g per item
+    return Math.max(calculatedWeight, 1000); // minimum 1kg
   }
 
+  // Get shipping rates (V1 Estimate API)
   async getShippingRates(pickupPincode, deliveryPincode, weight, codAmount = 0) {
     try {
       console.log('💰 Getting shipping rates...');
@@ -432,8 +441,10 @@ class EkartService {
     }
   }
 
+  // Check shipment in dashboard (helper method)
   async checkShipmentInDashboard(trackingId) {
     try {
+      // Try to track the shipment - if it returns data, it exists
       const trackData = await this.trackShipment(trackingId);
       return {
         exists: trackData && !trackData.error,
