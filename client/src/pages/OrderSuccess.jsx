@@ -18,8 +18,13 @@ const OrderSuccess = () => {
       const sessionId = searchParams.get('session_id');
       const orderId = searchParams.get('order_id');
 
+      console.log('🔍 OrderSuccess mounted');
+      console.log('🔍 Session ID:', sessionId);
+      console.log('🔍 Order ID:', orderId);
+
       // Check if coming from COD order
       if (location.state?.orderId && location.state?.paymentMethod === 'cod') {
+        console.log('✅ COD order detected');
         setOrderDetails(location.state);
         setLoading(false);
         return;
@@ -28,18 +33,27 @@ const OrderSuccess = () => {
       // Verify Stripe payment
       if (sessionId && orderId) {
         try {
+          console.log('🔄 Calling verify-payment API...');
+          console.log('API URL:', `/orders/verify-payment/${sessionId}?order_id=${orderId}`);
+
           const { data } = await API.get(`/orders/verify-payment/${sessionId}?order_id=${orderId}`);
           
+          console.log('📡 API Response:', data);
+
           if (data.success) {
+            console.log('✅ Payment verified successfully');
             dispatch(clearCart());
             setOrderDetails({
               orderId: data.orderId,
               amount: data.amount,
               paymentMethod: 'online',
               paymentStatus: 'success',
-              trackingId: data.trackingId
+              trackingId: data.trackingId,
+              shipmentCreated: data.shipmentCreated,
+              shipmentError: data.shipmentError
             });
           } else {
+            console.error('❌ Payment verification failed');
             navigate('/order-failed', {
               state: {
                 orderId: data.orderId,
@@ -48,13 +62,18 @@ const OrderSuccess = () => {
             });
           }
         } catch (error) {
-          console.error('Payment verification failed:', error);
+          console.error('❌ Payment verification error:', error);
+          console.error('Error response:', error.response?.data);
           navigate('/order-failed');
         } finally {
           setLoading(false);
         }
       } else {
-        // No valid data, redirect to home
+        console.error('❌ Missing session_id or order_id');
+        console.log('searchParams:', {
+          session_id: sessionId,
+          order_id: orderId
+        });
         navigate('/');
       }
     };
@@ -68,6 +87,7 @@ const OrderSuccess = () => {
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
           <p className="text-gray-600">Verifying payment...</p>
+          <p className="text-sm text-gray-500 mt-2">Please wait, do not close this window</p>
         </div>
       </div>
     );
@@ -121,8 +141,38 @@ const OrderSuccess = () => {
             </div>
           </div>
 
-          {/* Tracking ID if available */}
-          {orderDetails.trackingId && (
+          {/* Shipment Status */}
+          {orderDetails.paymentMethod === 'online' && (
+            <div className="mb-6">
+              {orderDetails.shipmentCreated && orderDetails.trackingId ? (
+                <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+                  <div className="flex items-center">
+                    <Package className="w-5 h-5 text-green-600 mr-2" />
+                    <div className="flex-1">
+                      <p className="text-sm text-green-800 font-medium">✅ Shipment Created Successfully</p>
+                      <p className="text-xs text-green-600 mt-1">Tracking ID: {orderDetails.trackingId}</p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                  <div className="flex items-center">
+                    <Package className="w-5 h-5 text-yellow-600 mr-2" />
+                    <div className="flex-1">
+                      <p className="text-sm text-yellow-800 font-medium">⚠️ Shipment Creation Pending</p>
+                      {orderDetails.shipmentError && (
+                        <p className="text-xs text-yellow-600 mt-1">Error: {orderDetails.shipmentError}</p>
+                      )}
+                      <p className="text-xs text-yellow-600 mt-1">We're processing your shipment. You'll receive tracking details via email soon.</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Tracking ID for COD */}
+          {orderDetails.trackingId && orderDetails.paymentMethod === 'cod' && (
             <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
               <div className="flex items-center">
                 <Package className="w-5 h-5 text-blue-600 mr-2" />
