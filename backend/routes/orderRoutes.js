@@ -369,15 +369,22 @@ router.get('/verify-payment/:sessionId', protectCustomer, async (req, res) => {
     const { order_id } = req.query;
 
     console.log('🔍 Verifying payment for session:', sessionId);
+    console.log('🔍 Order ID:', order_id);
 
     const session = await stripe.retrieveSession(sessionId);
     const order = await Order.findOne({ orderId: order_id, user: req.user._id });
 
     if (!order) {
+      console.error('❌ Order not found:', order_id);
       return res.status(404).json({ message: 'Order not found' });
     }
 
+    console.log('📦 Found order:', order.orderId);
+    console.log('💳 Stripe payment status:', session.payment_status);
+
     if (session.payment_status === 'paid') {
+      console.log('✅ Payment successful, updating order status');
+      
       order.paymentStatus = 'success';
       order.orderStatus = 'confirmed';
       order.stripePaymentStatus = 'paid';
@@ -395,17 +402,30 @@ router.get('/verify-payment/:sessionId', protectCustomer, async (req, res) => {
       // Automatically create Ekart shipment for successful online payments - WITH RETRY LOGIC
       let shipmentCreated = false;
       let trackingId = null;
+      let shipmentError = null;
 
       if (!order.ekartTrackingId) {
         try {
-          console.log('🚚 Creating Ekart shipment for online order...');
+          console.log('🚚 ========================================');
+          console.log('🚚 Creating Ekart shipment for online order');
+          console.log('🚚 ========================================');
+          console.log('📦 Order ID:', order.orderId);
+          console.log('📍 Customer:', order.shippingAddress.name);
+          console.log('📍 City:', order.shippingAddress.city);
+          console.log('📍 Pincode:', order.shippingAddress.pincode);
+          console.log('📍 Phone:', order.shippingAddress.mobile);
+          console.log('💰 Amount:', order.finalAmount);
+          console.log('🚚 ========================================');
+
           const ekartResponse = await EkartService.createShipment(
             order,
             order.shippingAddress,
             order.items
           );
 
-          if (ekartResponse.success) {
+          console.log('📡 Ekart API Response:', JSON.stringify(ekartResponse, null, 2));
+
+          if (ekartResponse.success && ekartResponse.tracking_id) {
             order.ekartTrackingId = ekartResponse.tracking_id;
             order.ekartShipmentData = ekartResponse.raw_response;
             order.ekartAWB = ekartResponse.awb_number;
@@ -413,22 +433,53 @@ router.get('/verify-payment/:sessionId', protectCustomer, async (req, res) => {
 
             shipmentCreated = true;
             trackingId = ekartResponse.tracking_id;
-            console.log('✅ Ekart shipment created automatically');
+            
+            console.log('🚚 ========================================');
+            console.log('✅ ✅ ✅ EKART SHIPMENT CREATED SUCCESSFULLY!');
+            console.log('🎯 Tracking ID:', trackingId);
+            console.log('📋 AWB Number:', ekartResponse.awb_number);
+            console.log('🚚 ========================================');
 
             // Verify in dashboard
             try {
-              await EkartService.checkShipmentInDashboard(ekartResponse.tracking_id);
+              const dashboardCheck = await EkartService.checkShipmentInDashboard(ekartResponse.tracking_id);
+              if (dashboardCheck.exists) {
+                console.log('✅ Shipment verified in Ekart dashboard');
+              } else {
+                console.log('⚠️ Shipment created but not yet visible in dashboard (may take a few minutes)');
+              }
             } catch (dashboardError) {
-              console.log('⚠️ Could not verify shipment in dashboard');
+              console.log('⚠️ Could not verify shipment in dashboard:', dashboardError.message);
             }
+          } else {
+            shipmentError = 'Ekart API returned unsuccessful response';
+            console.error('🚚 ========================================');
+            console.error('❌ Ekart shipment creation returned unsuccessful');
+            console.error('Response:', JSON.stringify(ekartResponse, null, 2));
+            console.error('🚚 ========================================');
           }
         } catch (ekartError) {
-          console.error('❌ Automatic Ekart shipment creation failed:', ekartError.message);
-          // Don't fail the payment verification if shipment creation fails
+          shipmentError = ekartError.message;
+          console.error('🚚 ========================================');
+          console.error('❌ ❌ ❌ EKART SHIPMENT CREATION FAILED');
+          console.error('Error Type:', ekartError.name);
+          console.error('Error Message:', ekartError.message);
+          console.error('Error Stack:', ekartError.stack);
+          console.error('🚚 ========================================');
+          
+          if (ekartError.response) {
+            console.error('📡 Ekart API Error Response:');
+            console.error('Status Code:', ekartError.response.status);
+            console.error('Status Text:', ekartError.response.statusText);
+            console.error('Response Data:', JSON.stringify(ekartError.response.data, null, 2));
+            console.error('Response Headers:', JSON.stringify(ekartError.response.headers, null, 2));
+          }
+          console.error('🚚 ========================================');
         }
       } else {
         shipmentCreated = true;
         trackingId = order.ekartTrackingId;
+        console.log('✅ Shipment already exists:', trackingId);
       }
 
       res.json({
@@ -437,9 +488,12 @@ router.get('/verify-payment/:sessionId', protectCustomer, async (req, res) => {
         paymentStatus: 'success',
         amount: order.finalAmount,
         trackingId: trackingId,
-        shipmentCreated: shipmentCreated
+        shipmentCreated: shipmentCreated,
+        shipmentError: shipmentError
       });
     } else {
+      console.log('❌ Payment not completed:', session.payment_status);
+      
       order.paymentStatus = 'failed';
       order.orderStatus = 'cancelled';
       await order.save();
@@ -452,7 +506,11 @@ router.get('/verify-payment/:sessionId', protectCustomer, async (req, res) => {
     }
   } catch (error) {
     console.error('❌ Verify payment error:', error);
-    res.status(500).json({ message: 'Failed to verify payment', error: error.message });
+    console.error('Stack:', error.stack);
+    res.status(500).json({ 
+      message: 'Failed to verify payment', 
+      error: error.message 
+    });
   }
 });
 
