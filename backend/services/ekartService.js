@@ -9,10 +9,15 @@ class EkartService {
     this.accessToken = null;
     this.tokenExpiry = null;
     
+    // ✅ CRITICAL FIX: Use EXACT name from registered address in Ekart
+    // This MUST match the name in your Ekart > Settings > Addresses section
+    this.pickupLocationName = "SHOPYMOL ( A UNIT OF ONE2ALL RECHARGE PRIVATE LIMITED )";
+    
     // Seller details from your Ekart account
     this.sellerDetails = {
       name: "ONE2ALL RECHARGE PRIVATE LIMITED",
       brand_name: "SHOPYMOL",
+      registered_address_name: "SHOPYMOL ( A UNIT OF ONE2ALL RECHARGE PRIVATE LIMITED )",
       address: "RZ-13, SHIVPURI COLONY PHASE-1, DINDARPUR, NAJAFGARH",
       city: "NEW DELHI",
       state: "Delhi",
@@ -22,7 +27,7 @@ class EkartService {
     };
   }
 
-  // ✅ Authentication - Unchanged but with better error handling
+  // ✅ Authentication - Unchanged
   async authenticate() {
     try {
       console.log('🔐 Authenticating with Ekart...');
@@ -84,7 +89,7 @@ class EkartService {
     }
   }
 
-  // ✅ FIXED: Phone formatting - Must return integer
+  // ✅ Phone formatting
   formatPhone(phone) {
     if (!phone) {
       throw new Error('Phone number is required');
@@ -102,35 +107,32 @@ class EkartService {
     return phoneInt;
   }
 
-  // ✅ FIXED: Weight calculation
+  // ✅ Weight calculation
   calculateTotalWeight(items) {
     const totalItems = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
-    const calculatedWeight = totalItems * 500; // 500g per item
-    const finalWeight = Math.max(calculatedWeight, 1000); // minimum 1kg
+    const calculatedWeight = totalItems * 500;
+    const finalWeight = Math.max(calculatedWeight, 1000);
     console.log(`⚖️ Weight calculated: ${totalItems} items → ${finalWeight}g`);
     return finalWeight;
   }
 
-  // ✅ MAIN FIX: Create Shipment with EXACT Ekart API format
+  // ✅ MAIN FIX: Create Shipment
   async createShipment(orderData, shippingAddress, items) {
     try {
       console.log('\n🚚 ============ CREATING EKART SHIPMENT ============');
       console.log('Order ID:', orderData.orderId);
       console.log('Payment Method:', orderData.paymentMethod);
       console.log('Final Amount:', orderData.finalAmount);
-      console.log('Customer Address:', JSON.stringify(shippingAddress, null, 2));
 
       const headers = await this.createHeaders();
       console.log('✅ Authentication headers ready');
 
-      // Calculate values
       const totalWeight = this.calculateTotalWeight(items);
       const totalQuantity = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
       const finalAmount = parseFloat(orderData.finalAmount);
       const taxableAmount = parseFloat((finalAmount / 1.18).toFixed(2));
       const taxValue = parseFloat((finalAmount - taxableAmount).toFixed(2));
 
-      // Format phone numbers - CRITICAL FIX
       let customerPhone;
       try {
         customerPhone = this.formatPhone(shippingAddress.mobile);
@@ -139,43 +141,36 @@ class EkartService {
         throw new Error(`Invalid customer phone number: ${shippingAddress.mobile}`);
       }
 
-      // ✅ CORRECTED PAYLOAD - Exact Ekart API format
+      // ✅ CRITICAL FIX: Use registered address name
       const shipmentPayload = {
-        // Seller details - Your Ekart registered business
         seller_name: this.sellerDetails.name,
         seller_address: `${this.sellerDetails.address}, ${this.sellerDetails.city}, ${this.sellerDetails.state}, ${this.sellerDetails.pincode}`,
         seller_gst_tin: this.sellerDetails.gst_tin,
         
-        // Order details
         order_number: orderData.orderId.toString(),
         invoice_number: orderData.orderId.toString(),
         invoice_date: new Date().toISOString().split('T')[0],
         
-        // Payment details
         payment_mode: orderData.paymentMethod === 'cod' ? 'COD' : 'Prepaid',
         cod_amount: orderData.paymentMethod === 'cod' ? finalAmount : 0,
         
-        // Product details
         category_of_goods: "General",
         products_desc: items.map(item => item.name).join(', ').substring(0, 100),
         
-        // Amount details
         total_amount: finalAmount,
         tax_value: taxValue,
         taxable_amount: taxableAmount,
         commodity_value: taxableAmount,
         
-        // Package details
         quantity: totalQuantity,
         weight: totalWeight,
         length: 15,
         height: 15,
         width: 15,
         
-        // ✅ FIXED: Drop location (Customer - to whom you're shipping)
         drop_location: {
           name: shippingAddress.name,
-          phone: customerPhone,  // Must be integer
+          phone: customerPhone,
           pin: parseInt(shippingAddress.pincode),
           address: `${shippingAddress.address}, ${shippingAddress.locality}`,
           city: shippingAddress.city,
@@ -183,10 +178,10 @@ class EkartService {
           country: "India"
         },
         
-        // ✅ FIXED: Pickup location (Your warehouse - from where pickup happens)
+        // ✅ CRITICAL FIX: Use exact registered address name
         pickup_location: {
-          name: this.sellerDetails.brand_name,
-          phone: this.sellerDetails.phone,  // Must be integer
+          name: this.pickupLocationName,  // Changed from brand_name
+          phone: this.sellerDetails.phone,
           pin: this.sellerDetails.pincode,
           address: this.sellerDetails.address,
           city: this.sellerDetails.city,
@@ -194,10 +189,10 @@ class EkartService {
           country: "India"
         },
         
-        // ✅ FIXED: Return location (Same as pickup)
+        // ✅ CRITICAL FIX: Use exact registered address name for return too
         return_location: {
-          name: this.sellerDetails.brand_name,
-          phone: this.sellerDetails.phone,  // Must be integer
+          name: this.pickupLocationName,  // Changed from brand_name
+          phone: this.sellerDetails.phone,
           pin: this.sellerDetails.pincode,
           address: this.sellerDetails.address,
           city: this.sellerDetails.city,
@@ -209,7 +204,6 @@ class EkartService {
       console.log('\n📦 Final Shipment Payload:');
       console.log(JSON.stringify(shipmentPayload, null, 2));
 
-      // ✅ API Call with proper error handling
       const createURL = `${this.baseURL}/api/v1/package/create`;
       console.log('\n🌐 API Endpoint:', createURL);
 
@@ -220,7 +214,7 @@ class EkartService {
           headers,
           timeout: 60000,
           validateStatus: function (status) {
-            return status >= 200 && status < 500; // Don't throw on 4xx errors
+            return status >= 200 && status < 500;
           }
         }
       );
@@ -229,11 +223,9 @@ class EkartService {
       console.log('Status:', response.status);
       console.log('Data:', JSON.stringify(response.data, null, 2));
 
-      // ✅ IMPROVED: Response validation
       if (response.status >= 200 && response.status < 300) {
         const data = response.data;
         
-        // Extract tracking ID from various possible locations
         const trackingId = data.tracking_id || data._id || data.data?.tracking_id || data.data?._id;
         const awbNumber = data.barcodes?.wbn || data.awb || data.data?.awb || trackingId;
 
@@ -259,12 +251,12 @@ class EkartService {
           raw_response: data
         };
       } else {
-        // Error response from Ekart
         console.error('❌ Ekart API returned error:');
         console.error('Status:', response.status);
         console.error('Data:', JSON.stringify(response.data, null, 2));
         
         const errorMsg = response.data?.message || 
+                        response.data?.description ||
                         response.data?.remark || 
                         response.data?.error || 
                         `API error: ${response.status}`;
@@ -282,7 +274,7 @@ class EkartService {
       
       console.error('============================================\n');
       
-      throw new Error(`Shipment creation failed: ${error.response?.data?.message || error.message}`);
+      throw new Error(`Shipment creation failed: ${error.response?.data?.description || error.response?.data?.message || error.message}`);
     }
   }
 
@@ -419,7 +411,6 @@ class EkartService {
     }
   }
 
-  // Get shipping rates
   async getShippingRates(pickupPincode, deliveryPincode, weight, codAmount = 0) {
     try {
       console.log('💰 Getting shipping rates...');
@@ -459,7 +450,6 @@ class EkartService {
     }
   }
 
-  // Check if shipment exists in dashboard
   async checkShipmentInDashboard(trackingId) {
     try {
       const trackData = await this.trackShipment(trackingId);
