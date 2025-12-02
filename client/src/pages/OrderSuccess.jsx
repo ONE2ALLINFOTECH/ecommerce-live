@@ -1,3 +1,4 @@
+// frontend/src/pages/OrderSuccess.jsx
 import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { CheckCircle, Package, Truck, Home } from 'lucide-react';
@@ -22,26 +23,26 @@ const OrderSuccess = () => {
       console.log('🔍 Session ID:', sessionId);
       console.log('🔍 Order ID:', orderId);
 
-      // Check if coming from COD order
+      // COD flow
       if (location.state?.orderId && location.state?.paymentMethod === 'cod') {
-        console.log('✅ COD order detected');
+        console.log('✅ COD order detected in state');
         setOrderDetails(location.state);
         setLoading(false);
         return;
       }
 
-      // Verify Stripe payment
+      // Online payment verification
       if (sessionId && orderId) {
         try {
           console.log('🔄 Calling verify-payment API...');
-          console.log('API URL:', `/orders/verify-payment/${sessionId}?order_id=${orderId}`);
+          const { data } = await API.get(
+            `/orders/verify-payment/${sessionId}?order_id=${orderId}`
+          );
 
-          const { data } = await API.get(`/orders/verify-payment/${sessionId}?order_id=${orderId}`);
-          
-          console.log('📡 API Response:', data);
+          console.log('📡 Verify-payment response:', data);
 
           if (data.success) {
-            console.log('✅ Payment verified successfully');
+            console.log('✅ Payment verified on frontend');
             dispatch(clearCart());
             setOrderDetails({
               orderId: data.orderId,
@@ -69,11 +70,7 @@ const OrderSuccess = () => {
           setLoading(false);
         }
       } else {
-        console.error('❌ Missing session_id or order_id');
-        console.log('searchParams:', {
-          session_id: sessionId,
-          order_id: orderId
-        });
+        console.error('❌ Missing session_id or order_id in URL');
         navigate('/');
       }
     };
@@ -85,9 +82,11 @@ const OrderSuccess = () => {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4" />
           <p className="text-gray-600">Verifying payment...</p>
-          <p className="text-sm text-gray-500 mt-2">Please wait, do not close this window</p>
+          <p className="text-sm text-gray-500 mt-2">
+            Please wait, do not close this window
+          </p>
         </div>
       </div>
     );
@@ -99,16 +98,15 @@ const OrderSuccess = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Flipkart Header */}
+      {/* Header */}
       <header className="bg-blue-600 text-white shadow-md">
         <div className="container mx-auto px-4 py-4">
           <h1 className="text-2xl font-bold">Flipkart</h1>
         </div>
       </header>
 
-      {/* Main Content */}
       <div className="container mx-auto px-4 py-8 max-w-4xl">
-        {/* Success Icon & Message */}
+        {/* Success */}
         <div className="text-center mb-8">
           <CheckCircle className="w-20 h-20 text-green-500 mx-auto mb-4 animate-bounce" />
           <h2 className="text-3xl font-bold text-gray-800 mb-2">
@@ -117,31 +115,36 @@ const OrderSuccess = () => {
           <p className="text-gray-600">Thank you for shopping with us</p>
         </div>
 
-        {/* Order Details Card */}
+        {/* Card */}
         <div className="bg-white rounded-lg shadow-md p-6 mb-6">
           <h3 className="text-xl font-semibold text-gray-800 mb-4">
             Order Information
           </h3>
 
-          {/* Order Summary Grid */}
           <div className="grid md:grid-cols-3 gap-4 mb-6">
             <div className="p-4 bg-gray-50 rounded-lg">
               <p className="text-sm text-gray-600 mb-1">Order ID</p>
-              <p className="font-semibold text-gray-800">#{orderDetails.orderId}</p>
+              <p className="font-semibold text-gray-800">
+                #{orderDetails.orderId}
+              </p>
             </div>
             <div className="p-4 bg-gray-50 rounded-lg">
               <p className="text-sm text-gray-600 mb-1">Total Amount</p>
-              <p className="font-semibold text-gray-800">₹{orderDetails.amount}</p>
+              <p className="font-semibold text-gray-800">
+                ₹{orderDetails.amount}
+              </p>
             </div>
             <div className="p-4 bg-gray-50 rounded-lg">
               <p className="text-sm text-gray-600 mb-1">Payment Mode</p>
               <p className="font-semibold text-gray-800">
-                {orderDetails.paymentMethod === 'cod' ? 'Cash on Delivery' : 'Paid Online'}
+                {orderDetails.paymentMethod === 'cod'
+                  ? 'Cash on Delivery'
+                  : 'Paid Online'}
               </p>
             </div>
           </div>
 
-          {/* Shipment Status */}
+          {/* Shipment status */}
           {orderDetails.paymentMethod === 'online' && (
             <div className="mb-6">
               {orderDetails.shipmentCreated && orderDetails.trackingId ? (
@@ -149,8 +152,12 @@ const OrderSuccess = () => {
                   <div className="flex items-center">
                     <Package className="w-5 h-5 text-green-600 mr-2" />
                     <div className="flex-1">
-                      <p className="text-sm text-green-800 font-medium">✅ Shipment Created Successfully</p>
-                      <p className="text-xs text-green-600 mt-1">Tracking ID: {orderDetails.trackingId}</p>
+                      <p className="text-sm text-green-800 font-medium">
+                        ✅ Shipment Created Successfully
+                      </p>
+                      <p className="text-xs text-green-600 mt-1">
+                        Tracking ID: {orderDetails.trackingId}
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -159,11 +166,18 @@ const OrderSuccess = () => {
                   <div className="flex items-center">
                     <Package className="w-5 h-5 text-yellow-600 mr-2" />
                     <div className="flex-1">
-                      <p className="text-sm text-yellow-800 font-medium">⚠️ Shipment Creation Pending</p>
+                      <p className="text-sm text-yellow-800 font-medium">
+                        ⚠️ Shipment Creation Pending
+                      </p>
                       {orderDetails.shipmentError && (
-                        <p className="text-xs text-yellow-600 mt-1">Error: {orderDetails.shipmentError}</p>
+                        <p className="text-xs text-yellow-600 mt-1">
+                          Error: {orderDetails.shipmentError}
+                        </p>
                       )}
-                      <p className="text-xs text-yellow-600 mt-1">We're processing your shipment. You'll receive tracking details via email soon.</p>
+                      <p className="text-xs text-yellow-600 mt-1">
+                        We're processing your shipment. You'll receive tracking
+                        details via email soon.
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -171,24 +185,30 @@ const OrderSuccess = () => {
             </div>
           )}
 
-          {/* Tracking ID for COD */}
-          {orderDetails.trackingId && orderDetails.paymentMethod === 'cod' && (
-            <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-              <div className="flex items-center">
-                <Package className="w-5 h-5 text-blue-600 mr-2" />
-                <div className="flex-1">
-                  <p className="text-sm text-blue-800 font-medium">Shipment Created</p>
-                  <p className="text-xs text-blue-600 mt-1">Tracking ID: {orderDetails.trackingId}</p>
+          {/* COD tracking */}
+          {orderDetails.trackingId &&
+            orderDetails.paymentMethod === 'cod' && (
+              <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <div className="flex items-center">
+                  <Package className="w-5 h-5 text-blue-600 mr-2" />
+                  <div className="flex-1">
+                    <p className="text-sm text-blue-800 font-medium">
+                      Shipment Created
+                    </p>
+                    <p className="text-xs text-blue-600 mt-1">
+                      Tracking ID: {orderDetails.trackingId}
+                    </p>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* Order Tracking Timeline */}
+          {/* Timeline (static UI) */}
           <div className="mt-8">
-            <h4 className="text-lg font-semibold text-gray-800 mb-4">Order Status</h4>
+            <h4 className="text-lg font-semibold text-gray-800 mb-4">
+              Order Status
+            </h4>
             <div className="relative">
-              {/* Order Placed */}
               <div className="flex items-start mb-8">
                 <div className="flex-shrink-0">
                   <div className="w-10 h-10 bg-green-500 rounded-full flex items-center justify-center shadow-lg">
@@ -196,16 +216,19 @@ const OrderSuccess = () => {
                   </div>
                 </div>
                 <div className="ml-4 flex-grow">
-                  <h5 className="font-semibold text-gray-800">Order Placed</h5>
+                  <h5 className="font-semibold text-gray-800">
+                    Order Placed
+                  </h5>
                   <p className="text-sm text-gray-600">Just now</p>
                   <p className="text-xs text-green-600 mt-1">✓ Confirmed</p>
                 </div>
               </div>
 
-              {/* Connecting Line */}
-              <div className="absolute left-5 top-10 bottom-0 w-0.5 bg-gray-300" style={{ height: 'calc(100% - 10rem)' }}></div>
+              <div
+                className="absolute left-5 top-10 bottom-0 w-0.5 bg-gray-300"
+                style={{ height: 'calc(100% - 10rem)' }}
+              />
 
-              {/* Packed */}
               <div className="flex items-start mb-8">
                 <div className="flex-shrink-0">
                   <div className="w-10 h-10 bg-gray-300 rounded-full flex items-center justify-center">
@@ -218,7 +241,6 @@ const OrderSuccess = () => {
                 </div>
               </div>
 
-              {/* Shipped */}
               <div className="flex items-start mb-8">
                 <div className="flex-shrink-0">
                   <div className="w-10 h-10 bg-gray-300 rounded-full flex items-center justify-center">
@@ -231,7 +253,6 @@ const OrderSuccess = () => {
                 </div>
               </div>
 
-              {/* Delivered */}
               <div className="flex items-start">
                 <div className="flex-shrink-0">
                   <div className="w-10 h-10 bg-gray-300 rounded-full flex items-center justify-center">
@@ -246,15 +267,25 @@ const OrderSuccess = () => {
             </div>
           </div>
 
-          {/* Payment Status Messages */}
+          {/* Payment info */}
           {orderDetails.paymentMethod === 'cod' && (
             <div className="mt-6 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
               <div className="flex items-start">
-                <svg className="w-5 h-5 text-yellow-600 mt-0.5 mr-3" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                <svg
+                  className="w-5 h-5 text-yellow-600 mt-0.5 mr-3"
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
+                    clipRule="evenodd"
+                  />
                 </svg>
                 <p className="text-yellow-800">
-                  <strong>Cash on Delivery:</strong> Please keep ₹{orderDetails.amount} ready for payment at the time of delivery.
+                  <strong>Cash on Delivery:</strong> Please keep ₹
+                  {orderDetails.amount} ready for payment at the time of
+                  delivery.
                 </p>
               </div>
             </div>
@@ -265,21 +296,32 @@ const OrderSuccess = () => {
               <div className="flex items-start">
                 <CheckCircle className="w-5 h-5 text-green-600 mt-0.5 mr-3" />
                 <p className="text-green-800">
-                  <strong>Payment Successful!</strong> Your payment of ₹{orderDetails.amount} has been processed successfully.
+                  <strong>Payment Successful!</strong> Your payment of ₹
+                  {orderDetails.amount} has been processed successfully.
                 </p>
               </div>
             </div>
           )}
         </div>
 
-        {/* Action Buttons */}
+        {/* Buttons */}
         <div className="flex flex-col sm:flex-row gap-4 mb-6">
           <Link
             to={`/order-tracking/${orderDetails.orderId}`}
             className="flex-1 bg-blue-600 text-white py-3 px-6 rounded-lg hover:bg-blue-700 transition text-center font-semibold flex items-center justify-center"
           >
-            <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 013.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+            <svg
+              className="w-5 h-5 mr-2"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 013.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"
+              />
             </svg>
             Track Your Order
           </Link>
@@ -291,12 +333,15 @@ const OrderSuccess = () => {
           </Link>
         </div>
 
-        {/* Help Section */}
+        {/* Help */}
         <div className="text-center text-gray-600 bg-white rounded-lg shadow-sm p-6">
           <h4 className="font-semibold text-gray-800 mb-2">Need Help?</h4>
           <p className="mb-4">
             Have questions about your order?{' '}
-            <Link to="/contact" className="text-blue-600 hover:underline font-semibold">
+            <Link
+              to="/contact"
+              className="text-blue-600 hover:underline font-semibold"
+            >
               Contact Customer Support
             </Link>
           </p>
