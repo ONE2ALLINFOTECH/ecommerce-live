@@ -205,7 +205,7 @@ router.post('/create', protectCustomer, async (req, res) => {
       order.orderStatus = 'confirmed';
       await order.save();
 
-      // Automatically create Ekart shipment for COD orders - WITH IMPROVED ERROR HANDLING
+      // Automatically create Ekart shipment for COD orders
       try {
         console.log('🚚 Creating Ekart shipment for COD order...');
         const ekartResponse = await EkartService.createShipment(
@@ -221,26 +221,10 @@ router.post('/create', protectCustomer, async (req, res) => {
           await order.save();
 
           console.log('✅ Ekart shipment created for COD order:', ekartResponse.tracking_id);
-
-          // Verify shipment exists in Ekart dashboard
-          try {
-            const dashboardCheck = await EkartService.checkShipmentInDashboard(ekartResponse.tracking_id);
-            if (dashboardCheck.exists) {
-              console.log('✅ Shipment verified in Ekart dashboard');
-            } else {
-              console.log('⚠️ Shipment created but not yet visible in dashboard');
-            }
-          } catch (dashboardError) {
-            console.log('⚠️ Could not verify shipment in dashboard:', dashboardError.message);
-          }
-        } else {
-          console.error('❌ Ekart shipment creation returned unsuccessful');
         }
-
       } catch (ekartError) {
         console.error('❌ Ekart shipment creation failed for COD:', ekartError.message);
         // Don't fail the order if shipment creation fails
-        // Just log the error and continue
       }
 
       // Clear cart for COD orders
@@ -279,90 +263,7 @@ router.post('/create', protectCustomer, async (req, res) => {
   }
 });
 
-// Create Ekart Shipment after successful payment - IMPROVED
-router.post('/create-shipment/:orderId', protectCustomer, async (req, res) => {
-  try {
-    const { orderId } = req.params;
-    const userId = req.user._id;
-
-    console.log('🚚 Creating Ekart shipment for order:', orderId);
-
-    const order = await Order.findOne({ orderId, user: userId });
-    if (!order) {
-      return res.status(404).json({ message: 'Order not found' });
-    }
-
-    // Check if shipment already exists
-    if (order.ekartTrackingId) {
-      // Verify if shipment actually exists in Ekart
-      try {
-        const dashboardCheck = await EkartService.checkShipmentInDashboard(order.ekartTrackingId);
-        if (dashboardCheck.exists) {
-          return res.status(400).json({ 
-            message: 'Shipment already created for this order',
-            trackingId: order.ekartTrackingId,
-            existsInDashboard: true
-          });
-        } else {
-          console.log('🔄 Shipment tracking ID exists but not in dashboard, recreating...');
-          // If tracking ID exists but not in dashboard, recreate shipment
-        }
-      } catch (error) {
-        console.log('🔄 Unable to verify existing shipment, recreating...');
-      }
-    }
-
-    // Create shipment with Ekart
-    const ekartResponse = await EkartService.createShipment(
-      order,
-      order.shippingAddress,
-      order.items
-    );
-
-    if (!ekartResponse.success) {
-      return res.status(500).json({
-        message: 'Failed to create shipment in Ekart',
-        error: ekartResponse.message
-      });
-    }
-
-    // Update order with Ekart tracking details
-    order.ekartTrackingId = ekartResponse.tracking_id;
-    order.ekartShipmentData = ekartResponse.raw_response;
-    order.ekartAWB = ekartResponse.awb_number;
-    order.orderStatus = 'confirmed';
-    await order.save();
-
-    console.log('✅ Ekart shipment created successfully:', order.ekartTrackingId);
-
-    // Verify shipment in dashboard
-    let dashboardStatus = 'unknown';
-    try {
-      const dashboardCheck = await EkartService.checkShipmentInDashboard(order.ekartTrackingId);
-      dashboardStatus = dashboardCheck.exists ? 'exists' : 'not_found';
-    } catch (error) {
-      dashboardStatus = 'check_failed';
-    }
-
-    res.json({
-      success: true,
-      message: 'Shipment created successfully',
-      trackingId: order.ekartTrackingId,
-      awb: order.ekartAWB,
-      orderStatus: order.orderStatus,
-      dashboardStatus: dashboardStatus
-    });
-
-  } catch (error) {
-    console.error('❌ Create shipment error:', error);
-    res.status(500).json({ 
-      message: 'Failed to create shipment', 
-      error: error.message 
-    });
-  }
-});
-
-// Verify Payment After Stripe Redirect - IMPROVED
+// ✅ FIXED: Verify Payment After Stripe Redirect
 router.get('/verify-payment/:sessionId', protectCustomer, async (req, res) => {
   try {
     const { sessionId } = req.params;
@@ -372,7 +273,10 @@ router.get('/verify-payment/:sessionId', protectCustomer, async (req, res) => {
     console.log('🔍 Order ID:', order_id);
 
     const session = await stripe.retrieveSession(sessionId);
-    const order = await Order.findOne({ orderId: order_id, user: req.user._id });
+    
+    // ✅ FIX: Populate items with full product details for Ekart
+    const order = await Order.findOne({ orderId: order_id, user: req.user._id })
+      .populate('items.productId', 'name sellingPrice');
 
     if (!order) {
       console.error('❌ Order not found:', order_id);
@@ -399,7 +303,7 @@ router.get('/verify-payment/:sessionId', protectCustomer, async (req, res) => {
 
       console.log('✅ Payment verified successfully');
 
-      // Automatically create Ekart shipment for successful online payments - WITH RETRY LOGIC
+      // ✅ FIX: Create Ekart shipment with COMPLETE order data
       let shipmentCreated = false;
       let trackingId = null;
       let shipmentError = null;
@@ -417,8 +321,15 @@ router.get('/verify-payment/:sessionId', protectCustomer, async (req, res) => {
           console.log('💰 Amount:', order.finalAmount);
           console.log('🚚 ========================================');
 
+          // ✅ FIX: Create complete order object for Ekart
+          const completeOrderData = {
+            orderId: order.orderId,
+            paymentMethod: 'online', // Stripe is prepaid
+            finalAmount: order.finalAmount
+          };
+
           const ekartResponse = await EkartService.createShipment(
-            order,
+            completeOrderData,
             order.shippingAddress,
             order.items
           );
@@ -439,18 +350,6 @@ router.get('/verify-payment/:sessionId', protectCustomer, async (req, res) => {
             console.log('🎯 Tracking ID:', trackingId);
             console.log('📋 AWB Number:', ekartResponse.awb_number);
             console.log('🚚 ========================================');
-
-            // Verify in dashboard
-            try {
-              const dashboardCheck = await EkartService.checkShipmentInDashboard(ekartResponse.tracking_id);
-              if (dashboardCheck.exists) {
-                console.log('✅ Shipment verified in Ekart dashboard');
-              } else {
-                console.log('⚠️ Shipment created but not yet visible in dashboard (may take a few minutes)');
-              }
-            } catch (dashboardError) {
-              console.log('⚠️ Could not verify shipment in dashboard:', dashboardError.message);
-            }
           } else {
             shipmentError = 'Ekart API returned unsuccessful response';
             console.error('🚚 ========================================');
@@ -465,14 +364,11 @@ router.get('/verify-payment/:sessionId', protectCustomer, async (req, res) => {
           console.error('Error Type:', ekartError.name);
           console.error('Error Message:', ekartError.message);
           console.error('Error Stack:', ekartError.stack);
-          console.error('🚚 ========================================');
           
           if (ekartError.response) {
             console.error('📡 Ekart API Error Response:');
             console.error('Status Code:', ekartError.response.status);
-            console.error('Status Text:', ekartError.response.statusText);
             console.error('Response Data:', JSON.stringify(ekartError.response.data, null, 2));
-            console.error('Response Headers:', JSON.stringify(ekartError.response.headers, null, 2));
           }
           console.error('🚚 ========================================');
         }
@@ -514,7 +410,82 @@ router.get('/verify-payment/:sessionId', protectCustomer, async (req, res) => {
   }
 });
 
-// Track shipment with Ekart - IMPROVED
+// Create Ekart Shipment manually (if needed)
+router.post('/create-shipment/:orderId', protectCustomer, async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const userId = req.user._id;
+
+    console.log('🚚 Creating Ekart shipment for order:', orderId);
+
+    const order = await Order.findOne({ orderId, user: userId });
+    if (!order) {
+      return res.status(404).json({ message: 'Order not found' });
+    }
+
+    // Check if shipment already exists
+    if (order.ekartTrackingId) {
+      try {
+        const dashboardCheck = await EkartService.checkShipmentInDashboard(order.ekartTrackingId);
+        if (dashboardCheck.exists) {
+          return res.status(400).json({ 
+            message: 'Shipment already created for this order',
+            trackingId: order.ekartTrackingId,
+            existsInDashboard: true
+          });
+        }
+      } catch (error) {
+        console.log('🔄 Unable to verify existing shipment, recreating...');
+      }
+    }
+
+    // Create shipment with Ekart
+    const completeOrderData = {
+      orderId: order.orderId,
+      paymentMethod: order.paymentMethod,
+      finalAmount: order.finalAmount
+    };
+
+    const ekartResponse = await EkartService.createShipment(
+      completeOrderData,
+      order.shippingAddress,
+      order.items
+    );
+
+    if (!ekartResponse.success) {
+      return res.status(500).json({
+        message: 'Failed to create shipment in Ekart',
+        error: ekartResponse.message
+      });
+    }
+
+    // Update order with Ekart tracking details
+    order.ekartTrackingId = ekartResponse.tracking_id;
+    order.ekartShipmentData = ekartResponse.raw_response;
+    order.ekartAWB = ekartResponse.awb_number;
+    order.orderStatus = 'confirmed';
+    await order.save();
+
+    console.log('✅ Ekart shipment created successfully:', order.ekartTrackingId);
+
+    res.json({
+      success: true,
+      message: 'Shipment created successfully',
+      trackingId: order.ekartTrackingId,
+      awb: order.ekartAWB,
+      orderStatus: order.orderStatus
+    });
+
+  } catch (error) {
+    console.error('❌ Create shipment error:', error);
+    res.status(500).json({ 
+      message: 'Failed to create shipment', 
+      error: error.message 
+    });
+  }
+});
+
+// Track shipment with Ekart
 router.get('/track/:orderId', protectCustomer, async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -532,22 +503,12 @@ router.get('/track/:orderId', protectCustomer, async (req, res) => {
         orderId: order.orderId,
         orderStatus: order.orderStatus,
         message: 'Shipment is being prepared. Tracking information will be available soon.',
-        trackingAvailable: false,
-        dashboardStatus: 'not_created'
+        trackingAvailable: false
       });
     }
 
     // Get tracking info from Ekart
     const trackingInfo = await EkartService.trackShipment(order.ekartTrackingId);
-
-    // Check if shipment exists in dashboard
-    let dashboardStatus = 'unknown';
-    try {
-      const dashboardCheck = await EkartService.checkShipmentInDashboard(order.ekartTrackingId);
-      dashboardStatus = dashboardCheck.exists ? 'exists' : 'not_found';
-    } catch (error) {
-      dashboardStatus = 'check_failed';
-    }
 
     res.json({
       orderId: order.orderId,
@@ -556,7 +517,6 @@ router.get('/track/:orderId', protectCustomer, async (req, res) => {
       orderStatus: order.orderStatus,
       trackingInfo: trackingInfo,
       trackingAvailable: true,
-      dashboardStatus: dashboardStatus,
       publicTrackingUrl: `https://app.elite.ekartlogistics.in/track/${order.ekartTrackingId}`
     });
 
@@ -594,19 +554,15 @@ router.put('/cancel/:orderId', protectCustomer, async (req, res) => {
     // Cancel Ekart shipment if exists
     if (order.ekartTrackingId) {
       try {
-        const cancelResult = await EkartService.cancelShipment(order.ekartTrackingId);
-        console.log('✅ Ekart shipment cancellation result:', cancelResult);
+        await EkartService.cancelShipment(order.ekartTrackingId);
       } catch (cancelError) {
         console.error('❌ Ekart shipment cancellation failed:', cancelError.message);
-        // Continue with order cancellation even if shipment cancellation fails
       }
     }
 
     order.orderStatus = 'cancelled';
     order.paymentStatus = 'cancelled';
     await order.save();
-
-    console.log('✅ Order cancelled successfully');
 
     res.json({ 
       message: 'Order cancelled successfully',
@@ -629,11 +585,7 @@ router.get('/serviceability/:pincode', async (req, res) => {
       });
     }
 
-    console.log('📍 Checking serviceability for pincode:', pincode);
-
     const serviceability = await EkartService.checkServiceability(pincode);
-
-    console.log('📍 Serviceability result:', serviceability);
 
     res.json({
       pincode,
@@ -648,7 +600,6 @@ router.get('/serviceability/:pincode', async (req, res) => {
   } catch (error) {
     console.error('❌ Serviceability check error:', error);
 
-    // Return serviceable even on error
     res.json({
       pincode: req.params.pincode,
       serviceable: true,
@@ -659,31 +610,6 @@ router.get('/serviceability/:pincode', async (req, res) => {
       warning: 'Serviceability check temporarily unavailable. Your order will proceed.',
       error: error.message
     });
-  }
-});
-
-// Get shipping rates estimate
-router.post('/shipping-rates', protectCustomer, async (req, res) => {
-  try {
-    const { pickupPincode, deliveryPincode, weight, codAmount } = req.body;
-
-    if (!pickupPincode || !deliveryPincode) {
-      return res.status(400).json({ 
-        message: 'Please provide both pickup and delivery pincodes' 
-      });
-    }
-
-    const rates = await EkartService.getShippingRates(
-      pickupPincode,
-      deliveryPincode,
-      weight || 1000,
-      codAmount || 0
-    );
-
-    res.json(rates);
-  } catch (error) {
-    console.error('❌ Shipping rates error:', error);
-    res.status(500).json({ message: 'Failed to get shipping rates', error: error.message });
   }
 });
 
@@ -719,7 +645,7 @@ router.get('/my-orders', protectCustomer, async (req, res) => {
   }
 });
 
-// Get Single Order Details - IMPROVED
+// Get Single Order Details
 router.get('/:orderId', protectCustomer, async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -734,15 +660,10 @@ router.get('/:orderId', protectCustomer, async (req, res) => {
 
     // Get latest tracking info if available
     let trackingInfo = null;
-    let dashboardStatus = 'unknown';
 
     if (order.ekartTrackingId) {
       try {
         trackingInfo = await EkartService.trackShipment(order.ekartTrackingId);
-        
-        // Check dashboard status
-        const dashboardCheck = await EkartService.checkShipmentInDashboard(order.ekartTrackingId);
-        dashboardStatus = dashboardCheck.exists ? 'exists' : 'not_found';
       } catch (trackError) {
         console.error('Error fetching tracking info:', trackError.message);
         trackingInfo = {
@@ -750,14 +671,12 @@ router.get('/:orderId', protectCustomer, async (req, res) => {
           current_status: 'Tracking information unavailable',
           error: trackError.message
         };
-        dashboardStatus = 'check_failed';
       }
     }
 
     res.json({
       ...order.toObject(),
       trackingInfo,
-      dashboardStatus,
       publicTrackingUrl: order.ekartTrackingId 
         ? `https://app.elite.ekartlogistics.in/track/${order.ekartTrackingId}`
         : null
