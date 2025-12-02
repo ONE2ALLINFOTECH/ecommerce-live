@@ -1,4 +1,3 @@
-// services/ekartService.js
 const axios = require('axios');
 
 class EkartService {
@@ -8,19 +7,17 @@ class EkartService {
     this.username = process.env.EKART_USERNAME;
     this.password = process.env.EKART_PASSWORD;
 
-    // Remove trailing slash just in case
     const base = process.env.EKART_BASE_URL || 'https://app.elite.ekartlogistics.in';
     this.baseURL = base.replace(/\/+$/, '');
 
     this.accessToken = null;
     this.tokenExpiry = null;
 
-    // PICKUP LOCATION KA EXACT NAME (Settings → Addresses screenshot se)
+    // Pickup location ka exact naam (Settings → Addresses se)
     this.pickupLocationName =
       process.env.PICKUP_LOCATION_NAME ||
       'SHOPYMOL ( A UNIT OF ONE2ALL RECHARGE PRIVATE LIMITED )';
 
-    // Seller details – env se, fallback tumhare hardcoded data pe
     this.sellerDetails = {
       name: process.env.SELLER_NAME || 'ONE2ALL RECHARGE PRIVATE LIMITED',
       brand_name: process.env.SELLER_BRAND_NAME || 'SHOPYMOL',
@@ -33,7 +30,7 @@ class EkartService {
       city: process.env.SELLER_CITY || 'NEW DELHI',
       state: process.env.SELLER_STATE || 'Delhi',
       pincode: parseInt(process.env.SELLER_PINCODE || '110043', 10),
-      phone: parseInt(process.env.SELLER_PHONE || '7303424343', 10),
+      phone: process.env.SELLER_PHONE || '7303424343',
       gst_tin: process.env.SELLER_GST_TIN || '07AACCO4657Q1ZS'
     };
   }
@@ -73,15 +70,10 @@ class EkartService {
       console.error('❌ [Ekart] Authentication failed:', error.message);
       if (error.response) {
         console.error('🔴 Auth Status:', error.response.status);
-        console.error(
-          '🔴 Auth Data:',
-          JSON.stringify(error.response.data, null, 2)
-        );
+        console.error('🔴 Auth Data:', JSON.stringify(error.response.data, null, 2));
       }
       throw new Error(
-        `Authentication failed: ${
-          error.response?.data?.message || error.message
-        }`
+        `Authentication failed: ${error.response?.data?.message || error.message}`
       );
     }
   }
@@ -114,22 +106,18 @@ class EkartService {
       throw new Error(`Invalid phone number: ${phone}. Must be 10 digits.`);
     }
     console.log(`📱 Phone formatted: ${phone} → ${last10}`);
-    return last10; // STRING bhejenge, int nahi
+    return last10; // string hi bhej rahe
   }
 
   calculateTotalWeight(items) {
-    const totalItems = items.reduce(
-      (sum, item) => sum + (item.quantity || 1),
-      0
-    );
-    const calculatedWeight = totalItems * 500; // per item 500g
+    const totalItems = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
+    const calculatedWeight = totalItems * 500;
     const finalWeight = Math.max(calculatedWeight, 1000); // min 1kg
     console.log(`⚖️ Weight calculated: ${totalItems} items → ${finalWeight}g`);
     return finalWeight;
   }
 
   // ================== CREATE SHIPMENT ==================
-
   async createShipment(orderData, shippingAddress, items) {
     try {
       console.log('\n🚚 ====== EKART: CREATE SHIPMENT START ======');
@@ -140,21 +128,17 @@ class EkartService {
       const headers = await this.createHeaders();
       console.log('✅ [Ekart] Headers ready');
 
-      // Amounts
       const totalWeight = this.calculateTotalWeight(items);
       const totalQuantity = items.reduce(
         (sum, item) => sum + (item.quantity || 1),
         0
       );
       const finalAmount = Number(orderData.finalAmount) || 0;
-
       const taxableAmount = Number((finalAmount / 1.18).toFixed(2));
       const taxValue = Number((finalAmount - taxableAmount).toFixed(2));
 
-      // Customer phone
       const customerPhone = this.formatPhone(shippingAddress.mobile);
 
-      // Payload (VERY CLOSE TO OFFICIAL DOCS)
       const shipmentPayload = {
         seller_name: this.sellerDetails.name,
         seller_address: `${this.sellerDetails.address}, ${this.sellerDetails.city}, ${this.sellerDetails.state}, ${this.sellerDetails.pincode}`,
@@ -179,7 +163,7 @@ class EkartService {
         commodity_value: taxableAmount,
 
         quantity: totalQuantity,
-        weight: (totalWeight / 1000).toString(), // ekart normally kg me string expect karta
+        weight: (totalWeight / 1000).toString(), // "1" kg
         length: 15,
         height: 15,
         width: 15,
@@ -221,8 +205,8 @@ class EkartService {
       const createURL = `${this.baseURL}/api/v1/package/create`;
       console.log('\n🌐 [Ekart] API Endpoint (CREATE):', createURL);
 
-      // 🔴 IMPORTANT: POST, NOT PUT
-      const response = await axios.post(createURL, shipmentPayload, {
+      // 🔴 IMPORTANT: Ekart yaha PUT chahta hai (POST pe hi tumhe PATH_NOT_IMPLEMENTED mila)
+      const response = await axios.put(createURL, shipmentPayload, {
         headers,
         timeout: 60000,
         validateStatus: (status) => status >= 200 && status < 500
@@ -283,10 +267,7 @@ class EkartService {
       console.error('Error:', error.message);
       if (error.response) {
         console.error('Status:', error.response.status);
-        console.error(
-          'Response:',
-          JSON.stringify(error.response.data, null, 2)
-        );
+        console.error('Response:', JSON.stringify(error.response.data, null, 2));
       }
       console.error('====================================\n');
 
@@ -318,8 +299,7 @@ class EkartService {
       console.log('✅ [Ekart] Shipment cancelled');
       return {
         success: true,
-        message:
-          response.data.message || response.data.remark || 'Cancelled',
+        message: response.data.message || response.data.remark || 'Cancelled',
         data: response.data
       };
     } catch (error) {
@@ -333,9 +313,7 @@ class EkartService {
       }
 
       throw new Error(
-        `Cancellation failed: ${
-          error.response?.data?.message || error.message
-        }`
+        `Cancellation failed: ${error.response?.data?.message || error.message}`
       );
     }
   }
@@ -406,8 +384,7 @@ class EkartService {
           prepaid_available: false,
           max_cod_amount: 0,
           estimated_delivery_days: 0,
-          message:
-            data.remark || data.message || 'Not serviceable',
+          message: data.remark || data.message || 'Not serviceable',
           raw_data: data
         };
       }
