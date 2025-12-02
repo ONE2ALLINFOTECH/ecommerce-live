@@ -139,6 +139,7 @@ class EkartService {
 
       const customerPhone = this.formatPhone(shippingAddress.mobile);
 
+      // 👉 IMPORTANT: Saare amount fields + quantity ko STRING me convert kiya gaya
       const shipmentPayload = {
         seller_name: this.sellerDetails.name,
         seller_address: `${this.sellerDetails.address}, ${this.sellerDetails.city}, ${this.sellerDetails.state}, ${this.sellerDetails.pincode}`,
@@ -149,7 +150,10 @@ class EkartService {
         invoice_date: new Date().toISOString().split('T')[0],
 
         payment_mode: orderData.paymentMethod === 'cod' ? 'COD' : 'Prepaid',
-        cod_amount: orderData.paymentMethod === 'cod' ? finalAmount : 0,
+        cod_amount:
+          orderData.paymentMethod === 'cod'
+            ? finalAmount.toString()
+            : '0',
 
         category_of_goods: 'General',
         products_desc: items
@@ -157,12 +161,12 @@ class EkartService {
           .join(', ')
           .substring(0, 100),
 
-        total_amount: finalAmount,
-        tax_value: taxValue,
-        taxable_amount: taxableAmount,
-        commodity_value: taxableAmount,
+        total_amount: finalAmount.toString(),
+        tax_value: taxValue.toString(),
+        taxable_amount: taxableAmount.toString(),
+        commodity_value: taxableAmount.toString(),
 
-        quantity: totalQuantity,
+        quantity: totalQuantity.toString(),
         weight: (totalWeight / 1000).toString(), // "1" kg
         length: 15,
         height: 15,
@@ -205,7 +209,7 @@ class EkartService {
       const createURL = `${this.baseURL}/api/v1/package/create`;
       console.log('\n🌐 [Ekart] API Endpoint (CREATE):', createURL);
 
-      // 🔴 IMPORTANT: Ekart yaha PUT chahta hai (POST pe hi tumhe PATH_NOT_IMPLEMENTED mila)
+      // Ekart yaha PUT use karta hai
       const response = await axios.put(createURL, shipmentPayload, {
         headers,
         timeout: 60000,
