@@ -1,8 +1,8 @@
+// services/ekartService.js - FIXED VERSION
 const axios = require('axios');
 
 class EkartService {
   constructor() {
-    // Base config
     this.clientId = process.env.EKART_CLIENT_ID;
     this.username = process.env.EKART_USERNAME;
     this.password = process.env.EKART_PASSWORD;
@@ -13,23 +13,17 @@ class EkartService {
     this.accessToken = null;
     this.tokenExpiry = null;
 
-    // Pickup location ka exact naam (Settings → Addresses se)
-    this.pickupLocationName =
-      process.env.PICKUP_LOCATION_NAME ||
+    // Pickup location - EXACT name from Ekart dashboard
+    this.pickupLocationName = process.env.PICKUP_LOCATION_NAME || 
       'SHOPYMOL ( A UNIT OF ONE2ALL RECHARGE PRIVATE LIMITED )';
 
     this.sellerDetails = {
       name: process.env.SELLER_NAME || 'ONE2ALL RECHARGE PRIVATE LIMITED',
       brand_name: process.env.SELLER_BRAND_NAME || 'SHOPYMOL',
-      registered_address_name:
-        process.env.REGISTERED_ADDRESS_NAME ||
-        'SHOPYMOL ( A UNIT OF ONE2ALL RECHARGE PRIVATE LIMITED )',
-      address:
-        process.env.SELLER_ADDRESS ||
-        'RZ-13, SHIVPURI COLONY PHASE-1, DINDARPUR, NAJAFGARH',
+      address: process.env.SELLER_ADDRESS || 'RZ-13, SHIVPURI COLONY PHASE-1, DINDARPUR, NAJAFGARH',
       city: process.env.SELLER_CITY || 'NEW DELHI',
       state: process.env.SELLER_STATE || 'Delhi',
-      pincode: parseInt(process.env.SELLER_PINCODE || '110043', 10),
+      pincode: process.env.SELLER_PINCODE || '110043',
       phone: process.env.SELLER_PHONE || '7303424343',
       gst_tin: process.env.SELLER_GST_TIN || '07AACCO4657Q1ZS'
     };
@@ -39,15 +33,11 @@ class EkartService {
   async authenticate() {
     try {
       console.log('🔐 [Ekart] Authenticating...');
-
       const authURL = `${this.baseURL}/integrations/v2/auth/token/${this.clientId}`;
 
       const response = await axios.post(
         authURL,
-        {
-          username: this.username,
-          password: this.password
-        },
+        { username: this.username, password: this.password },
         {
           headers: {
             'Content-Type': 'application/json',
@@ -57,7 +47,7 @@ class EkartService {
         }
       );
 
-      if (response.data && response.data.access_token) {
+      if (response.data?.access_token) {
         this.accessToken = response.data.access_token;
         const expiresIn = response.data.expires_in || 3600;
         this.tokenExpiry = Date.now() + (expiresIn - 300) * 1000;
@@ -67,14 +57,8 @@ class EkartService {
 
       throw new Error('No access token in response');
     } catch (error) {
-      console.error('❌ [Ekart] Authentication failed:', error.message);
-      if (error.response) {
-        console.error('🔴 Auth Status:', error.response.status);
-        console.error('🔴 Auth Data:', JSON.stringify(error.response.data, null, 2));
-      }
-      throw new Error(
-        `Authentication failed: ${error.response?.data?.message || error.message}`
-      );
+      console.error('❌ [Ekart] Auth failed:', error.message);
+      throw new Error(`Authentication failed: ${error.response?.data?.message || error.message}`);
     }
   }
 
@@ -95,96 +79,101 @@ class EkartService {
   }
 
   // ================== HELPERS ==================
-
   formatPhone(phone) {
-    if (!phone) {
-      throw new Error('Phone number is required');
-    }
+    if (!phone) throw new Error('Phone number is required');
     const cleaned = phone.toString().replace(/\D/g, '');
     const last10 = cleaned.slice(-10);
     if (last10.length !== 10) {
-      throw new Error(`Invalid phone number: ${phone}. Must be 10 digits.`);
+      throw new Error(`Invalid phone: ${phone}. Must be 10 digits.`);
     }
-    console.log(`📱 Phone formatted: ${phone} → ${last10}`);
-    return last10; // string hi bhej rahe
+    return last10;
   }
 
-  calculateTotalWeight(items) {
+  calculateWeight(items) {
     const totalItems = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
-    const calculatedWeight = totalItems * 500;
-    const finalWeight = Math.max(calculatedWeight, 1000); // min 1kg
-    console.log(`⚖️ Weight calculated: ${totalItems} items → ${finalWeight}g`);
-    return finalWeight;
+    const weight = Math.max(totalItems * 500, 1000); // Min 1kg
+    return weight;
   }
 
-  // ================== CREATE SHIPMENT ==================
+  // ================== CREATE SHIPMENT - FIXED ==================
   async createShipment(orderData, shippingAddress, items) {
     try {
       console.log('\n🚚 ====== EKART: CREATE SHIPMENT START ======');
-      console.log('🧾 Order ID:', orderData.orderId);
-      console.log('💳 Payment Method:', orderData.paymentMethod);
-      console.log('💰 Final Amount:', orderData.finalAmount);
+      console.log('📦 Order ID:', orderData.orderId);
+      console.log('💳 Payment:', orderData.paymentMethod);
+      console.log('💰 Amount:', orderData.finalAmount);
 
       const headers = await this.createHeaders();
-      console.log('✅ [Ekart] Headers ready');
 
-      const totalWeight = this.calculateTotalWeight(items);
-      const totalQuantity = items.reduce(
-        (sum, item) => sum + (item.quantity || 1),
-        0
-      );
+      // Weight & Quantity
+      const totalWeight = this.calculateWeight(items);
+      const totalQuantity = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
+      
+      // Amount calculations
       const finalAmount = Number(orderData.finalAmount) || 0;
       const taxableAmount = Number((finalAmount / 1.18).toFixed(2));
       const taxValue = Number((finalAmount - taxableAmount).toFixed(2));
 
+      // Phone validation
       const customerPhone = this.formatPhone(shippingAddress.mobile);
+      const sellerPhone = this.formatPhone(this.sellerDetails.phone);
 
-      // 👉 IMPORTANT: Saare amount fields + quantity ko STRING me convert kiya gaya
+      // Products description
+      const productsDesc = items
+        .map(item => item.name || 'Product')
+        .join(', ')
+        .substring(0, 100);
+
+      // ✅ FIXED PAYLOAD - Correct data types
       const shipmentPayload = {
+        // Seller info (strings)
         seller_name: this.sellerDetails.name,
         seller_address: `${this.sellerDetails.address}, ${this.sellerDetails.city}, ${this.sellerDetails.state}, ${this.sellerDetails.pincode}`,
         seller_gst_tin: this.sellerDetails.gst_tin,
 
+        // Order info (strings)
         order_number: orderData.orderId.toString(),
         invoice_number: orderData.orderId.toString(),
         invoice_date: new Date().toISOString().split('T')[0],
 
+        // Payment (strings)
         payment_mode: orderData.paymentMethod === 'cod' ? 'COD' : 'Prepaid',
-        cod_amount:
-          orderData.paymentMethod === 'cod'
-            ? finalAmount.toString()
-            : '0',
+        cod_amount: orderData.paymentMethod === 'cod' ? finalAmount.toFixed(2) : '0.00',
 
+        // Product info (strings)
         category_of_goods: 'General',
-        products_desc: items
-          .map((item) => item.name || 'Product')
-          .join(', ')
-          .substring(0, 100),
+        products_desc: productsDesc,
 
-        total_amount: finalAmount.toString(),
-        tax_value: taxValue.toString(),
-        taxable_amount: taxableAmount.toString(),
-        commodity_value: taxableAmount.toString(),
+        // Amounts (strings with 2 decimals)
+        total_amount: finalAmount.toFixed(2),
+        tax_value: taxValue.toFixed(2),
+        taxable_amount: taxableAmount.toFixed(2),
+        commodity_value: taxableAmount.toFixed(2),
 
+        // Quantity & Weight (strings)
         quantity: totalQuantity.toString(),
-        weight: (totalWeight / 1000).toString(), // "1" kg
+        weight: (totalWeight / 1000).toFixed(2), // In kg
+
+        // Dimensions (numbers)
         length: 15,
         height: 15,
         width: 15,
 
+        // Drop location (delivery address)
         drop_location: {
-          name: shippingAddress.name,
+          name: shippingAddress.name.substring(0, 50),
           phone: customerPhone,
           pin: shippingAddress.pincode.toString(),
-          address: `${shippingAddress.address}, ${shippingAddress.locality}`,
+          address: `${shippingAddress.address}, ${shippingAddress.locality}`.substring(0, 200),
           city: shippingAddress.city,
           state: shippingAddress.state,
           country: 'India'
         },
 
+        // Pickup location (warehouse)
         pickup_location: {
           name: this.pickupLocationName,
-          phone: this.formatPhone(this.sellerDetails.phone),
+          phone: sellerPhone,
           pin: this.sellerDetails.pincode.toString(),
           address: this.sellerDetails.address,
           city: this.sellerDetails.city,
@@ -192,9 +181,10 @@ class EkartService {
           country: 'India'
         },
 
+        // Return location (same as pickup)
         return_location: {
           name: this.pickupLocationName,
-          phone: this.formatPhone(this.sellerDetails.phone),
+          phone: sellerPhone,
           pin: this.sellerDetails.pincode.toString(),
           address: this.sellerDetails.address,
           city: this.sellerDetails.city,
@@ -203,47 +193,39 @@ class EkartService {
         }
       };
 
-      console.log('\n📦 [Ekart] Final Shipment Payload:');
+      console.log('\n📋 Final Payload:');
       console.log(JSON.stringify(shipmentPayload, null, 2));
 
+      // API call - Ekart uses PUT method
       const createURL = `${this.baseURL}/api/v1/package/create`;
-      console.log('\n🌐 [Ekart] API Endpoint (CREATE):', createURL);
+      console.log('\n🌐 API Endpoint:', createURL);
 
-      // Ekart yaha PUT use karta hai
       const response = await axios.put(createURL, shipmentPayload, {
         headers,
         timeout: 60000,
         validateStatus: (status) => status >= 200 && status < 500
       });
 
-      console.log('\n📡 [Ekart] API Response:');
-      console.log('Status:', response.status);
-      console.log('Data:', JSON.stringify(response.data, null, 2));
+      console.log('\n📡 Response Status:', response.status);
+      console.log('📡 Response Data:', JSON.stringify(response.data, null, 2));
 
-      if (response.status >= 200 && response.status < 300) {
+      // Success check
+      if (response.status >= 200 && response.status < 300 && response.data) {
         const data = response.data;
 
-        const trackingId =
-          data.tracking_id ||
-          data._id ||
-          data.data?.tracking_id ||
-          data.data?._id;
-
-        const awbNumber =
-          data.barcodes?.wbn ||
-          data.awb ||
-          data.data?.awb ||
-          trackingId;
+        // Extract tracking ID
+        const trackingId = data.tracking_id || data._id || data.data?.tracking_id || data.data?._id;
+        const awbNumber = data.barcodes?.wbn || data.awb || data.data?.awb || trackingId;
 
         if (!trackingId) {
-          console.error('❌ [Ekart] No tracking ID in successful response');
+          console.error('❌ No tracking ID in response');
           throw new Error('Shipment created but no tracking ID received');
         }
 
-        console.log('\n✅✅✅ [Ekart] SHIPMENT CREATED');
+        console.log('\n✅✅✅ SHIPMENT CREATED SUCCESSFULLY');
         console.log('🎯 Tracking ID:', trackingId);
-        console.log('📋 AWB Number:', awbNumber);
-        console.log('🚚 =================================\n');
+        console.log('📋 AWB:', awbNumber);
+        console.log('🚚 ====================================\n');
 
         return {
           success: true,
@@ -257,28 +239,33 @@ class EkartService {
         };
       }
 
-      console.error('❌ [Ekart] API returned error:');
-      const errorMsg =
-        response.data?.message ||
-        response.data?.description ||
-        response.data?.remark ||
-        response.data?.error ||
-        `API error: ${response.status}`;
+      // Error response
+      const errorMsg = response.data?.message || 
+                      response.data?.description || 
+                      response.data?.remark || 
+                      response.data?.error ||
+                      `API error: ${response.status}`;
+
+      console.error('❌ API Error:', errorMsg);
+      console.error('Full response:', JSON.stringify(response.data, null, 2));
 
       throw new Error(errorMsg);
+
     } catch (error) {
-      console.error('\n❌❌❌ [Ekart] SHIPMENT CREATION FAILED');
+      console.error('\n❌❌❌ SHIPMENT CREATION FAILED');
       console.error('Error:', error.message);
+      
       if (error.response) {
         console.error('Status:', error.response.status);
         console.error('Response:', JSON.stringify(error.response.data, null, 2));
       }
+      
       console.error('====================================\n');
 
       throw new Error(
         `Shipment creation failed: ${
-          error.response?.data?.description ||
-          error.response?.data?.message ||
+          error.response?.data?.description || 
+          error.response?.data?.message || 
           error.message
         }`
       );
@@ -288,7 +275,7 @@ class EkartService {
   // ================== CANCEL SHIPMENT ==================
   async cancelShipment(trackingId) {
     try {
-      console.log('🗑️ [Ekart] Canceling shipment:', trackingId);
+      console.log('🗑️ Canceling shipment:', trackingId);
       const headers = await this.createHeaders();
 
       const response = await axios.delete(
@@ -300,14 +287,14 @@ class EkartService {
         }
       );
 
-      console.log('✅ [Ekart] Shipment cancelled');
+      console.log('✅ Shipment cancelled');
       return {
         success: true,
-        message: response.data.message || response.data.remark || 'Cancelled',
+        message: response.data.message || 'Cancelled',
         data: response.data
       };
     } catch (error) {
-      console.error('❌ [Ekart] Cancel failed:', error.response?.data || error.message);
+      console.error('❌ Cancel failed:', error.response?.data || error.message);
 
       if (error.response?.status === 404) {
         return {
@@ -316,16 +303,14 @@ class EkartService {
         };
       }
 
-      throw new Error(
-        `Cancellation failed: ${error.response?.data?.message || error.message}`
-      );
+      throw new Error(`Cancellation failed: ${error.response?.data?.message || error.message}`);
     }
   }
 
   // ================== TRACK SHIPMENT ==================
   async trackShipment(trackingId) {
     try {
-      console.log('📊 [Ekart] Tracking shipment:', trackingId);
+      console.log('📊 Tracking:', trackingId);
       const headers = await this.createHeaders();
 
       const response = await axios.get(
@@ -347,7 +332,7 @@ class EkartService {
         raw_data: data
       };
     } catch (error) {
-      console.error('❌ [Ekart] Tracking failed:', error.message);
+      console.error('❌ Tracking failed:', error.message);
       return {
         tracking_id: trackingId,
         current_status: 'Tracking unavailable',
@@ -360,7 +345,7 @@ class EkartService {
 
   normalizeScans(scans) {
     if (!Array.isArray(scans)) return [];
-    return scans.map((scan) => ({
+    return scans.map(scan => ({
       status: scan.status || 'Status Update',
       location: scan.location || 'N/A',
       timestamp: scan.ctime || new Date().toISOString(),
@@ -371,7 +356,7 @@ class EkartService {
   // ================== SERVICEABILITY ==================
   async checkServiceability(pincode) {
     try {
-      console.log('📍 [Ekart] Checking serviceability:', pincode);
+      console.log('📍 Checking serviceability:', pincode);
       const headers = await this.createHeaders();
 
       const response = await axios.get(
@@ -388,7 +373,7 @@ class EkartService {
           prepaid_available: false,
           max_cod_amount: 0,
           estimated_delivery_days: 0,
-          message: data.remark || data.message || 'Not serviceable',
+          message: data.remark || 'Not serviceable',
           raw_data: data
         };
       }
@@ -404,7 +389,7 @@ class EkartService {
         raw_data: data
       };
     } catch (error) {
-      console.error('❌ [Ekart] Serviceability check failed:', error.message);
+      console.error('❌ Serviceability check failed:', error.message);
       return {
         serviceable: true,
         cod_available: true,
@@ -412,61 +397,6 @@ class EkartService {
         max_cod_amount: 50000,
         estimated_delivery_days: 3,
         warning: 'Check temporarily unavailable',
-        error: error.message
-      };
-    }
-  }
-
-  // ================== RATES ==================
-  async getShippingRates(pickupPincode, deliveryPincode, weight, codAmount = 0) {
-    try {
-      console.log('💰 [Ekart] Getting shipping rates...');
-      const headers = await this.createHeaders();
-
-      const response = await axios.post(
-        `${this.baseURL}/data/pricing/estimate`,
-        {
-          pickupPincode: pickupPincode.toString(),
-          dropPincode: deliveryPincode.toString(),
-          weight: (weight || 1000).toString(),
-          length: '15',
-          height: '15',
-          width: '15',
-          paymentMode: codAmount > 0 ? 'COD' : 'Prepaid',
-          invoiceAmount: (codAmount || 100).toString(),
-          codAmount: codAmount.toString(),
-          shippingDirection: 'forward',
-          serviceType: 'SURFACE'
-        },
-        { headers, timeout: 30000 }
-      );
-
-      return {
-        success: true,
-        ...response.data
-      };
-    } catch (error) {
-      console.error('❌ [Ekart] Rate fetch failed:', error.message);
-      return {
-        success: false,
-        freight_charge: 50,
-        cod_charge: codAmount > 0 ? 30 : 0,
-        total_charge: codAmount > 0 ? 80 : 50
-      };
-    }
-  }
-
-  // ================== DASHBOARD CHECK ==================
-  async checkShipmentInDashboard(trackingId) {
-    try {
-      const trackData = await this.trackShipment(trackingId);
-      return {
-        exists: trackData && !trackData.error,
-        data: trackData
-      };
-    } catch (error) {
-      return {
-        exists: false,
         error: error.message
       };
     }
