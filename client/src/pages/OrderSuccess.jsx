@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams, Link } from 'react-router-dom';
-import { CheckCircle, Package, Truck, Home } from 'lucide-react';
+import { CheckCircle, Package, Truck, Home, RefreshCw } from 'lucide-react';
 import { useDispatch } from 'react-redux';
 import { clearCart } from '../store/cartSlice';
 import API from '../services/api';
@@ -12,16 +12,15 @@ const OrderSuccess = () => {
   const [searchParams] = useSearchParams();
   const [orderDetails, setOrderDetails] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [retryingShipment, setRetryingShipment] = useState(false);
 
   useEffect(() => {
     const verifyPayment = async () => {
       const sessionId = searchParams.get('session_id');
       const orderId = searchParams.get('order_id');
-
       console.log('🔍 OrderSuccess mounted');
       console.log('🔍 Session ID:', sessionId);
       console.log('🔍 Order ID:', orderId);
-
       // Check if coming from COD order
       if (location.state?.orderId && location.state?.paymentMethod === 'cod') {
         console.log('✅ COD order detected');
@@ -29,17 +28,14 @@ const OrderSuccess = () => {
         setLoading(false);
         return;
       }
-
       // Verify Stripe payment
       if (sessionId && orderId) {
         try {
           console.log('🔄 Calling verify-payment API...');
           console.log('API URL:', `/orders/verify-payment/${sessionId}?order_id=${orderId}`);
-
           const { data } = await API.get(`/orders/verify-payment/${sessionId}?order_id=${orderId}`);
-          
+         
           console.log('📡 API Response:', data);
-
           if (data.success) {
             console.log('✅ Payment verified successfully');
             dispatch(clearCart());
@@ -77,9 +73,28 @@ const OrderSuccess = () => {
         navigate('/');
       }
     };
-
     verifyPayment();
   }, [searchParams, location.state, navigate, dispatch]);
+
+  // ✅ NEW: Retry shipment function
+  const retryShipment = async () => {
+    if (!orderDetails?.orderId || retryingShipment) return;
+    setRetryingShipment(true);
+    try {
+      console.log('🔄 Retrying shipment creation...');
+      const { data } = await API.post(`/orders/create-shipment/${orderDetails.orderId}`);
+      if (data.success) {
+        setOrderDetails(prev => ({ ...prev, trackingId: data.trackingId, shipmentCreated: true, shipmentError: null }));
+        console.log('✅ Shipment retry successful');
+      } else {
+        console.error('❌ Shipment retry failed:', data.message);
+      }
+    } catch (error) {
+      console.error('❌ Shipment retry error:', error);
+    } finally {
+      setRetryingShipment(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -92,11 +107,9 @@ const OrderSuccess = () => {
       </div>
     );
   }
-
   if (!orderDetails) {
     return null;
   }
-
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Flipkart Header */}
@@ -105,7 +118,6 @@ const OrderSuccess = () => {
           <h1 className="text-2xl font-bold">Flipkart</h1>
         </div>
       </header>
-
       {/* Main Content */}
       <div className="container mx-auto px-4 py-8 max-w-4xl">
         {/* Success Icon & Message */}
@@ -116,13 +128,11 @@ const OrderSuccess = () => {
           </h2>
           <p className="text-gray-600">Thank you for shopping with us</p>
         </div>
-
         {/* Order Details Card */}
         <div className="bg-white rounded-lg shadow-md p-6 mb-6">
           <h3 className="text-xl font-semibold text-gray-800 mb-4">
             Order Information
           </h3>
-
           {/* Order Summary Grid */}
           <div className="grid md:grid-cols-3 gap-4 mb-6">
             <div className="p-4 bg-gray-50 rounded-lg">
@@ -140,8 +150,7 @@ const OrderSuccess = () => {
               </p>
             </div>
           </div>
-
-          {/* Shipment Status */}
+          {/* Shipment Status - FIXED: Added retry button */}
           {orderDetails.paymentMethod === 'online' && (
             <div className="mb-6">
               {orderDetails.shipmentCreated && orderDetails.trackingId ? (
@@ -164,14 +173,22 @@ const OrderSuccess = () => {
                         <p className="text-xs text-yellow-600 mt-1">Error: {orderDetails.shipmentError}</p>
                       )}
                       <p className="text-xs text-yellow-600 mt-1">We're processing your shipment. You'll receive tracking details via email soon.</p>
+                      {/* ✅ NEW: Retry Button */}
+                      <button
+                        onClick={retryShipment}
+                        disabled={retryingShipment}
+                        className="mt-2 flex items-center text-xs text-yellow-700 bg-yellow-200 px-3 py-1 rounded hover:bg-yellow-300 transition disabled:opacity-50"
+                      >
+                        <RefreshCw className={`w-3 h-3 mr-1 ${retryingShipment ? 'animate-spin' : ''}`} />
+                        {retryingShipment ? 'Retrying...' : 'Retry Shipment'}
+                      </button>
                     </div>
                   </div>
                 </div>
               )}
             </div>
           )}
-
-          {/* Tracking ID for COD */}
+          {/* Tracking ID for COD - Unchanged */}
           {orderDetails.trackingId && orderDetails.paymentMethod === 'cod' && (
             <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
               <div className="flex items-center">
@@ -183,8 +200,7 @@ const OrderSuccess = () => {
               </div>
             </div>
           )}
-
-          {/* Order Tracking Timeline */}
+          {/* Order Tracking Timeline - Unchanged */}
           <div className="mt-8">
             <h4 className="text-lg font-semibold text-gray-800 mb-4">Order Status</h4>
             <div className="relative">
@@ -201,10 +217,8 @@ const OrderSuccess = () => {
                   <p className="text-xs text-green-600 mt-1">✓ Confirmed</p>
                 </div>
               </div>
-
               {/* Connecting Line */}
               <div className="absolute left-5 top-10 bottom-0 w-0.5 bg-gray-300" style={{ height: 'calc(100% - 10rem)' }}></div>
-
               {/* Packed */}
               <div className="flex items-start mb-8">
                 <div className="flex-shrink-0">
@@ -217,7 +231,6 @@ const OrderSuccess = () => {
                   <p className="text-sm text-gray-600">Pending</p>
                 </div>
               </div>
-
               {/* Shipped */}
               <div className="flex items-start mb-8">
                 <div className="flex-shrink-0">
@@ -230,7 +243,6 @@ const OrderSuccess = () => {
                   <p className="text-sm text-gray-600">Pending</p>
                 </div>
               </div>
-
               {/* Delivered */}
               <div className="flex items-start">
                 <div className="flex-shrink-0">
@@ -245,8 +257,7 @@ const OrderSuccess = () => {
               </div>
             </div>
           </div>
-
-          {/* Payment Status Messages */}
+          {/* Payment Status Messages - Unchanged */}
           {orderDetails.paymentMethod === 'cod' && (
             <div className="mt-6 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
               <div className="flex items-start">
@@ -259,7 +270,6 @@ const OrderSuccess = () => {
               </div>
             </div>
           )}
-
           {orderDetails.paymentMethod === 'online' && (
             <div className="mt-6 bg-green-50 border border-green-200 rounded-lg p-4">
               <div className="flex items-start">
@@ -271,8 +281,7 @@ const OrderSuccess = () => {
             </div>
           )}
         </div>
-
-        {/* Action Buttons */}
+        {/* Action Buttons - Unchanged */}
         <div className="flex flex-col sm:flex-row gap-4 mb-6">
           <Link
             to={`/order-tracking/${orderDetails.orderId}`}
@@ -290,8 +299,7 @@ const OrderSuccess = () => {
             Continue Shopping
           </Link>
         </div>
-
-        {/* Help Section */}
+        {/* Help Section - Unchanged */}
         <div className="text-center text-gray-600 bg-white rounded-lg shadow-sm p-6">
           <h4 className="font-semibold text-gray-800 mb-2">Need Help?</h4>
           <p className="mb-4">
