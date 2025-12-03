@@ -1,4 +1,4 @@
-// services/ekartService.js - COMPLETE FIXED VERSION
+// services/ekartService.js - COMPLETE FIXED VERSION (Proper String Format)
 const axios = require('axios');
 
 class EkartService {
@@ -13,7 +13,6 @@ class EkartService {
     this.accessToken = null;
     this.tokenExpiry = null;
 
-    // Pickup location - EXACT name from Ekart dashboard
     this.pickupLocationName = process.env.PICKUP_LOCATION_NAME || 
       'SHOPYMOL ( A UNIT OF ONE2ALL RECHARGE PRIVATE LIMITED )';
 
@@ -29,7 +28,6 @@ class EkartService {
     };
   }
 
-  // ================== AUTH ==================
   async authenticate() {
     try {
       console.log('🔐 [Ekart] Authenticating...');
@@ -78,7 +76,6 @@ class EkartService {
     };
   }
 
-  // ================== HELPERS ==================
   formatPhone(phone) {
     if (!phone) throw new Error('Phone number is required');
     const cleaned = phone.toString().replace(/\D/g, '');
@@ -91,11 +88,11 @@ class EkartService {
 
   calculateWeight(items) {
     const totalItems = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
-    const weight = Math.max(totalItems * 500, 1000); // Min 1kg
+    const weight = Math.max(totalItems * 500, 1000);
     return weight;
   }
 
-  // ================== CREATE SHIPMENT - FIXED ==================
+  // ================== CREATE SHIPMENT - FINAL FIX ==================
   async createShipment(orderData, shippingAddress, items) {
     try {
       console.log('\n🚚 ====== EKART: CREATE SHIPMENT START ======');
@@ -105,61 +102,51 @@ class EkartService {
 
       const headers = await this.createHeaders();
 
-      // Weight & Quantity
       const totalWeight = this.calculateWeight(items);
       const totalQuantity = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
       
-      // Amount calculations - Keep as NUMBERS
+      // Calculate amounts as numbers first
       const finalAmount = Number(orderData.finalAmount) || 0;
-      const taxableAmount = Number((finalAmount / 1.18).toFixed(2));
-      const taxValue = Number((finalAmount - taxableAmount).toFixed(2));
+      const taxableAmount = finalAmount / 1.18;
+      const taxValue = finalAmount - taxableAmount;
 
-      // Phone validation
       const customerPhone = this.formatPhone(shippingAddress.mobile);
       const sellerPhone = this.formatPhone(this.sellerDetails.phone);
 
-      // Products description
       const productsDesc = items
         .map(item => item.name || 'Product')
         .join(', ')
         .substring(0, 100);
 
-      // ✅ CRITICAL FIX: Send NUMBERS for amount fields, not strings
+      // ✅ FINAL FIX: All amounts as STRINGS with exactly 2 decimal places
       const shipmentPayload = {
-        // Seller info (strings)
         seller_name: this.sellerDetails.name,
         seller_address: `${this.sellerDetails.address}, ${this.sellerDetails.city}, ${this.sellerDetails.state}, ${this.sellerDetails.pincode}`,
         seller_gst_tin: this.sellerDetails.gst_tin,
 
-        // Order info (strings)
         order_number: orderData.orderId.toString(),
         invoice_number: orderData.orderId.toString(),
         invoice_date: new Date().toISOString().split('T')[0],
 
-        // Payment (strings)
         payment_mode: orderData.paymentMethod === 'cod' ? 'COD' : 'Prepaid',
         cod_amount: orderData.paymentMethod === 'cod' ? finalAmount.toFixed(2) : '0.00',
 
-        // Product info (strings)
         category_of_goods: 'General',
         products_desc: productsDesc,
 
-        // ⚠️ CRITICAL: These must be NUMBERS, not strings
-        total_amount: finalAmount,              // NUMBER ✅
-        tax_value: taxValue,                    // NUMBER ✅
-        taxable_amount: taxableAmount,          // NUMBER ✅
-        commodity_value: taxableAmount,         // NUMBER ✅
+        // ⚠️ CRITICAL: ALL amounts as STRINGS with .toFixed(2)
+        total_amount: finalAmount.toFixed(2),              // "60.00" ✅
+        tax_value: taxValue.toFixed(2),                    // "9.15" ✅
+        taxable_amount: taxableAmount.toFixed(2),          // "50.85" ✅
+        commodity_value: taxableAmount.toFixed(2),         // "50.85" ✅
 
-        // Quantity & Weight (strings)
         quantity: totalQuantity.toString(),
-        weight: (totalWeight / 1000).toFixed(2), // In kg
+        weight: (totalWeight / 1000).toFixed(2),
 
-        // Dimensions (numbers)
         length: 15,
         height: 15,
         width: 15,
 
-        // Drop location (delivery address)
         drop_location: {
           name: shippingAddress.name.substring(0, 50),
           phone: customerPhone,
@@ -170,7 +157,6 @@ class EkartService {
           country: 'India'
         },
 
-        // Pickup location (warehouse)
         pickup_location: {
           name: this.pickupLocationName,
           phone: sellerPhone,
@@ -181,7 +167,6 @@ class EkartService {
           country: 'India'
         },
 
-        // Return location (same as pickup)
         return_location: {
           name: this.pickupLocationName,
           phone: sellerPhone,
@@ -196,7 +181,6 @@ class EkartService {
       console.log('\n📋 Final Payload:');
       console.log(JSON.stringify(shipmentPayload, null, 2));
 
-      // API call - Ekart uses PUT method
       const createURL = `${this.baseURL}/api/v1/package/create`;
       console.log('\n🌐 API Endpoint:', createURL);
 
@@ -209,11 +193,9 @@ class EkartService {
       console.log('\n📡 Response Status:', response.status);
       console.log('📡 Response Data:', JSON.stringify(response.data, null, 2));
 
-      // Success check
       if (response.status >= 200 && response.status < 300 && response.data) {
         const data = response.data;
 
-        // Extract tracking ID
         const trackingId = data.tracking_id || data._id || data.data?.tracking_id || data.data?._id;
         const awbNumber = data.barcodes?.wbn || data.awb || data.data?.awb || trackingId;
 
@@ -239,7 +221,6 @@ class EkartService {
         };
       }
 
-      // Error response
       const errorMsg = response.data?.message || 
                       response.data?.description || 
                       response.data?.remark || 
@@ -272,7 +253,6 @@ class EkartService {
     }
   }
 
-  // ================== CANCEL SHIPMENT ==================
   async cancelShipment(trackingId) {
     try {
       console.log('🗑️ Canceling shipment:', trackingId);
@@ -307,7 +287,6 @@ class EkartService {
     }
   }
 
-  // ================== TRACK SHIPMENT ==================
   async trackShipment(trackingId) {
     try {
       console.log('📊 Tracking:', trackingId);
@@ -353,7 +332,6 @@ class EkartService {
     }));
   }
 
-  // ================== SERVICEABILITY ==================
   async checkServiceability(pincode) {
     try {
       console.log('📍 Checking serviceability:', pincode);
