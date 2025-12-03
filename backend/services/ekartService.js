@@ -1,4 +1,4 @@
-// services/ekartService.js - COMPLETE FIXED VERSION
+// services/ekartService.js - COMPLETE WORKING VERSION
 const axios = require('axios');
 
 class EkartService {
@@ -13,20 +13,19 @@ class EkartService {
     this.accessToken = null;
     this.tokenExpiry = null;
 
-    // IMPORTANT: Use the EXACT pickup location name from your Ekart dashboard
-    // Check your Ekart account under "Pickup Locations" for the exact name
-    this.pickupLocationName = process.env.EKART_PICKUP_LOCATION_NAME || 
+    // Pickup location - EXACT name from Ekart dashboard
+    this.pickupLocationName = process.env.PICKUP_LOCATION_NAME || 
       'SHOPYMOL ( A UNIT OF ONE2ALL RECHARGE PRIVATE LIMITED )';
 
     this.sellerDetails = {
-      name: 'ONE2ALL RECHARGE PRIVATE LIMITED',
-      brand_name: 'SHOPYMOL',
-      address: 'RZ-13, SHIVPURI COLONY PHASE-1, DINDARPUR, NAJAFGARH, NEW DELHI, Delhi, DL, 110043',
-      city: 'NEW DELHI',
-      state: 'Delhi',
-      pincode: '110043',
-      phone: '7303424343',
-      gst_tin: '07AACCO4657Q1ZS'
+      name: process.env.SELLER_NAME || 'ONE2ALL RECHARGE PRIVATE LIMITED',
+      brand_name: process.env.SELLER_BRAND_NAME || 'SHOPYMOL',
+      address: process.env.SELLER_ADDRESS || 'RZ-13, SHIVPURI COLONY PHASE-1, DINDARPUR, NAJAFGARH',
+      city: process.env.SELLER_CITY || 'NEW DELHI',
+      state: process.env.SELLER_STATE || 'Delhi',
+      pincode: process.env.SELLER_PINCODE || '110043',
+      phone: process.env.SELLER_PHONE || '7303424343',
+      gst_tin: process.env.SELLER_GST_TIN || '07AACCO4657Q1ZS'
     };
   }
 
@@ -38,10 +37,7 @@ class EkartService {
 
       const response = await axios.post(
         authURL,
-        { 
-          username: this.username, 
-          password: this.password 
-        },
+        { username: this.username, password: this.password },
         {
           headers: {
             'Content-Type': 'application/json',
@@ -90,164 +86,111 @@ class EkartService {
     if (last10.length !== 10) {
       throw new Error(`Invalid phone: ${phone}. Must be 10 digits.`);
     }
-    return parseInt(last10, 10); // Return as NUMBER like PHP
+    return last10;
   }
 
-  generateEWBN() {
-    // Generate 12-digit EWBN like PHP: str_pad(mt_rand(1,999999999999),12, '0', STR_PAD_LEFT)
-    return Math.floor(Math.random() * 999999999999).toString().padStart(12, '0');
+  calculateWeight(items) {
+    const totalItems = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
+    const weight = Math.max(totalItems * 500, 1000); // Min 1kg
+    return weight;
   }
 
-  // ================== CREATE SHIPMENT - EXACTLY LIKE PHP ==================
+  // ================== CREATE SHIPMENT ==================
   async createShipment(orderData, shippingAddress, items) {
     try {
       console.log('\n🚚 ====== EKART: CREATE SHIPMENT START ======');
       console.log('📦 Order ID:', orderData.orderId);
+      console.log('💳 Payment:', orderData.paymentMethod);
+      console.log('💰 Amount:', orderData.finalAmount);
 
       const headers = await this.createHeaders();
 
-      // Calculate totals
+      // Weight & Quantity
+      const totalWeight = this.calculateWeight(items);
       const totalQuantity = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
-      const totalWeight = Math.max(totalQuantity * 500, 1000); // Min 1kg in grams
       
+      // Amount calculations
       const finalAmount = Number(orderData.finalAmount) || 0;
       const taxableAmount = Number((finalAmount / 1.18).toFixed(2));
       const taxValue = Number((finalAmount - taxableAmount).toFixed(2));
 
-      // Format phones as NUMBERS (like PHP intval())
+      // Phone validation
       const customerPhone = this.formatPhone(shippingAddress.mobile);
       const sellerPhone = this.formatPhone(this.sellerDetails.phone);
 
-      // Product description (max 100 chars like PHP)
+      // Products description
       const productsDesc = items
-        .map(item => `${item.name || 'Product'} (Qty: ${item.quantity || 1})`)
+        .map(item => item.name || 'Product')
         .join(', ')
         .substring(0, 100);
 
-      // EWBN
-      const ewbn = this.generateEWBN();
-
-      // Current date for invoice/document
-      const currentDate = new Date().toISOString().split('T')[0];
-
-      // ✅ EXACT PAYLOAD STRUCTURE FROM PHP
+      // ✅ CORRECT PAYLOAD - All proper data types
       const shipmentPayload = {
-        // Seller info
+        // Seller info (strings)
         seller_name: this.sellerDetails.name,
-        seller_address: this.sellerDetails.address,
+        seller_address: `${this.sellerDetails.address}, ${this.sellerDetails.city}, ${this.sellerDetails.state}, ${this.sellerDetails.pincode}`,
         seller_gst_tin: this.sellerDetails.gst_tin,
-        seller_gst_amount: 0,
-        consignee_gst_amount: 0,
-        integrated_gst_amount: 0,
 
-        // Document info
-        ewbn: ewbn,
+        // Order info (strings)
         order_number: orderData.orderId.toString(),
-        invoice_number: `INV_${orderData.orderId}`,
-        invoice_date: currentDate,
-        document_number: `DOC_${orderData.orderId}`,
-        document_date: currentDate,
-        consignee_gst_tin: 'NA',
+        invoice_number: orderData.orderId.toString(),
+        invoice_date: new Date().toISOString().split('T')[0],
 
-        // Customer info
-        consignee_name: shippingAddress.name.substring(0, 50),
-
-        // Product info
-        products_desc: productsDesc,
+        // Payment (strings)
         payment_mode: orderData.paymentMethod === 'cod' ? 'COD' : 'Prepaid',
+        cod_amount: orderData.paymentMethod === 'cod' ? finalAmount.toFixed(2) : '0.00',
+
+        // Product info (strings)
         category_of_goods: 'General',
-        hsn_code: '610910', // Default HSN like PHP
+        products_desc: productsDesc,
 
-        // Amounts (as NUMBERS, not strings)
-        total_amount: finalAmount,
-        tax_value: taxValue,
-        taxable_amount: taxableAmount,
-        commodity_value: taxableAmount,
-        cod_amount: orderData.paymentMethod === 'cod' ? finalAmount : 0,
+        // Amounts (strings with 2 decimals)
+        total_amount: finalAmount.toFixed(2),
+        tax_value: taxValue.toFixed(2),
+        taxable_amount: taxableAmount.toFixed(2),
+        commodity_value: taxableAmount.toFixed(2),
 
-        // Quantity & Weight (as NUMBERS)
-        quantity: totalQuantity,
-        weight: Math.max(1, Math.round(totalWeight / 1000)), // kg, min 1
+        // Quantity & Weight (strings)
+        quantity: totalQuantity.toString(),
+        weight: (totalWeight / 1000).toFixed(2), // In kg
 
-        // Dimensions (as NUMBERS)
+        // Dimensions (numbers)
         length: 15,
         height: 15,
         width: 15,
 
-        // Return reason
-        return_reason: 'NA',
-
-        // Drop location (delivery address) - EXACT structure from PHP
+        // Drop location (delivery address)
         drop_location: {
-          location_type: 'Home',
+          name: shippingAddress.name.substring(0, 50),
+          phone: customerPhone,
+          pin: shippingAddress.pincode.toString(),
           address: `${shippingAddress.address}, ${shippingAddress.locality}`.substring(0, 200),
           city: shippingAddress.city,
           state: shippingAddress.state,
-          country: 'IND',
-          name: shippingAddress.name.substring(0, 50),
-          phone: customerPhone, // NUMBER
-          pin: parseInt(shippingAddress.pincode, 10) // NUMBER
+          country: 'India'
         },
 
-        // Pickup location - EXACT from PHP
+        // Pickup location (warehouse)
         pickup_location: {
-          location_type: 'Office',
+          name: this.pickupLocationName,
+          phone: sellerPhone,
+          pin: this.sellerDetails.pincode.toString(),
           address: this.sellerDetails.address,
           city: this.sellerDetails.city,
           state: this.sellerDetails.state,
-          country: 'IND',
-          name: this.pickupLocationName,
-          phone: sellerPhone, // NUMBER
-          pin: parseInt(this.sellerDetails.pincode, 10) // NUMBER
+          country: 'India'
         },
 
-        // Return location - EXACT from PHP
+        // Return location (same as pickup)
         return_location: {
-          location_type: 'Office',
+          name: this.pickupLocationName,
+          phone: sellerPhone,
+          pin: this.sellerDetails.pincode.toString(),
           address: this.sellerDetails.address,
           city: this.sellerDetails.city,
           state: this.sellerDetails.state,
-          country: 'IND',
-          name: this.pickupLocationName,
-          phone: sellerPhone, // NUMBER
-          pin: parseInt(this.sellerDetails.pincode, 10) // NUMBER
-        },
-
-        // QC Details (optional but included like PHP)
-        qc_details: {
-          qc_shipment: true,
-          product_name: 'string',
-          product_desc: 'string',
-          product_sku: 'string',
-          product_color: 'string',
-          product_size: 'string',
-          brand_name: 'string',
-          product_category: 'string',
-          ean_barcode: 'string',
-          serial_number: 'string',
-          imei_number: 'string',
-          product_images: ['string']
-        },
-
-        // Items array - like PHP
-        items: items.map((item, index) => ({
-          product_name: (item.name || 'Product').substring(0, 50),
-          sku: `SKU${orderData.orderId}_${index + 1}`,
-          taxable_value: Math.round((item.sellingPrice || 0) * (item.quantity || 1)),
-          description: productsDesc,
-          quantity: item.quantity || 1,
-          length: 15,
-          height: 15,
-          breadth: 15,
-          weight: Math.max(1, Math.round(((item.quantity || 1) * 500) / 1000)), // kg
-          hsn_code: '610910',
-          cgst_tax_value: 0,
-          sgst_tax_value: 0,
-          igst_tax_value: 0
-        })),
-
-        // What3words
-        what3words_address: 'apple.orange.grapes'
+          country: 'India'
+        }
       };
 
       console.log('\n📋 Final Payload:');
@@ -270,16 +213,9 @@ class EkartService {
       if (response.status >= 200 && response.status < 300 && response.data) {
         const data = response.data;
 
-        // Extract tracking ID - check multiple possible fields
-        const trackingId = data.tracking_id || 
-                          data._id || 
-                          data.data?.tracking_id || 
-                          data.data?._id;
-
-        const awbNumber = data.barcodes?.wbn || 
-                         data.awb || 
-                         data.data?.awb || 
-                         trackingId;
+        // Extract tracking ID
+        const trackingId = data.tracking_id || data._id || data.data?.tracking_id || data.data?._id;
+        const awbNumber = data.barcodes?.wbn || data.awb || data.data?.awb || trackingId;
 
         if (!trackingId) {
           console.error('❌ No tracking ID in response');
