@@ -1,4 +1,4 @@
-// services/ekartService.js - FIXED VERSION (Matches PHP)
+// services/ekartService.js - COMPLETE FIXED VERSION
 const axios = require('axios');
 
 class EkartService {
@@ -13,17 +13,17 @@ class EkartService {
     this.accessToken = null;
     this.tokenExpiry = null;
 
-    // Pickup location - EXACT from PHP
-    this.pickupLocationName = 'SHOPYMOL ( A UNIT OF ONE2ALL RECHARGE PRIVATE LIMITED )';
+    // EXACT pickup location from PHP
+    this.pickupLocationName = 'DINDARPUR';
 
     this.sellerDetails = {
       name: 'ONE2ALL RECHARGE PRIVATE LIMITED',
       brand_name: 'SHOPYMOL',
-      address: 'RZ-13, SHIVPURI COLONY PHASE-1, DINDARPUR, NAJAFGARH, NEW DELHI , Delhi, Delhi - (110043)',
+      address: 'RZ-13, SHIVPURI COLONY PHASE-1, DINDARPUR, NAJAFGARH, NEW DELHI, Delhi, DL, 110043',
       city: 'NEW DELHI',
       state: 'Delhi',
-      pincode: 110043,
-      phone: 7303424343,
+      pincode: '110043',
+      phone: '7303424343',
       gst_tin: '07AACCO4657Q1ZS'
     };
   }
@@ -36,7 +36,10 @@ class EkartService {
 
       const response = await axios.post(
         authURL,
-        { username: this.username, password: this.password },
+        { 
+          username: this.username, 
+          password: this.password 
+        },
         {
           headers: {
             'Content-Type': 'application/json',
@@ -85,81 +88,47 @@ class EkartService {
     if (last10.length !== 10) {
       throw new Error(`Invalid phone: ${phone}. Must be 10 digits.`);
     }
-    return parseInt(last10, 10); // Return as integer like PHP
+    return parseInt(last10, 10); // Return as NUMBER like PHP
   }
 
-  calculateWeight(items) {
-    const totalItems = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
-    const weight = Math.max(totalItems * 500, 1000); // Min 1kg
-    return weight;
-  }
-
-  // Generate EWBN like PHP
   generateEWBN() {
+    // Generate 12-digit EWBN like PHP: str_pad(mt_rand(1,999999999999),12, '0', STR_PAD_LEFT)
     return Math.floor(Math.random() * 999999999999).toString().padStart(12, '0');
   }
 
-  // Get current date in Y:m:d format like PHP
-  getCurrentDate() {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    return `${year}:${month}:${day}`;
-  }
-
-  // ================== CREATE SHIPMENT - FIXED TO MATCH PHP ==================
+  // ================== CREATE SHIPMENT - EXACTLY LIKE PHP ==================
   async createShipment(orderData, shippingAddress, items) {
     try {
       console.log('\n🚚 ====== EKART: CREATE SHIPMENT START ======');
       console.log('📦 Order ID:', orderData.orderId);
-      console.log('💳 Payment:', orderData.paymentMethod);
-      console.log('💰 Amount:', orderData.finalAmount);
 
       const headers = await this.createHeaders();
 
-      // Weight & Quantity
-      const totalWeight = this.calculateWeight(items);
+      // Calculate totals
       const totalQuantity = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
+      const totalWeight = Math.max(totalQuantity * 500, 1000); // Min 1kg in grams
       
-      // Amount calculations
       const finalAmount = Number(orderData.finalAmount) || 0;
-      const taxRate = 0.18; // 18% GST
-      const taxableAmount = Number((finalAmount / (1 + taxRate)).toFixed(2));
+      const taxableAmount = Number((finalAmount / 1.18).toFixed(2));
       const taxValue = Number((finalAmount - taxableAmount).toFixed(2));
 
-      // Phone validation - return as INTEGER like PHP
+      // Format phones as NUMBERS (like PHP intval())
       const customerPhone = this.formatPhone(shippingAddress.mobile);
       const sellerPhone = this.formatPhone(this.sellerDetails.phone);
 
-      // Products description
+      // Product description (max 100 chars like PHP)
       const productsDesc = items
-        .map(item => `${item.name || 'Product'}(Qty: ${item.quantity})`)
-        .join('\n')
-        .substring(0, 200);
+        .map(item => `${item.name || 'Product'} (Qty: ${item.quantity || 1})`)
+        .join(', ')
+        .substring(0, 100);
 
-      // Generate EWBN and dates
+      // EWBN
       const ewbn = this.generateEWBN();
-      const currentDate = this.getCurrentDate();
 
-      // Build items array with detailed structure like PHP
-      const itemsArray = items.map(item => ({
-        product_name: item.name || 'Product',
-        sku: `SKU_${item.productId}`,
-        taxable_value: parseInt(item.sellingPrice * item.quantity),
-        description: productsDesc,
-        quantity: parseInt(item.quantity),
-        length: 15,
-        height: 15,
-        breadth: 15,
-        weight: Math.max(1, 500), // 500g per item, min 1kg
-        hsn: '0000',
-        cgst_tax_value: 0,
-        sgst_tax_value: 0,
-        igst_tax_value: 0
-      }));
+      // Current date for invoice/document
+      const currentDate = new Date().toISOString().split('T')[0];
 
-      // ✅ PAYLOAD MATCHING PHP STRUCTURE
+      // ✅ EXACT PAYLOAD STRUCTURE FROM PHP
       const shipmentPayload = {
         // Seller info
         seller_name: this.sellerDetails.name,
@@ -169,51 +138,56 @@ class EkartService {
         consignee_gst_amount: 0,
         integrated_gst_amount: 0,
 
-        // Order info - MATCH PHP FORMAT
+        // Document info
         ewbn: ewbn,
         order_number: orderData.orderId.toString(),
         invoice_number: `INV_${orderData.orderId}`,
-        invoice_date: `INV_${currentDate}`,
+        invoice_date: currentDate,
         document_number: `DOC_${orderData.orderId}`,
-        document_date: `DOC_${currentDate}`,
-        consignee_gst_tin: 'string',
-        consignee_name: shippingAddress.name,
+        document_date: currentDate,
+        consignee_gst_tin: 'NA',
+
+        // Customer info
+        consignee_name: shippingAddress.name.substring(0, 50),
 
         // Product info
         products_desc: productsDesc,
         payment_mode: orderData.paymentMethod === 'cod' ? 'COD' : 'Prepaid',
         category_of_goods: 'General',
-        hsn_code: '0000',
+        hsn_code: '610910', // Default HSN like PHP
 
-        // Amounts - INTEGERS like PHP
-        total_amount: parseInt(finalAmount),
-        tax_value: parseInt(taxValue),
-        taxable_amount: 1,
-        commodity_value: parseInt(finalAmount),
-        cod_amount: orderData.paymentMethod === 'cod' ? parseInt(finalAmount) : 0,
+        // Amounts (as NUMBERS, not strings)
+        total_amount: finalAmount,
+        tax_value: taxValue,
+        taxable_amount: taxableAmount,
+        commodity_value: taxableAmount,
+        cod_amount: orderData.paymentMethod === 'cod' ? finalAmount : 0,
 
-        // Quantity & Weight - INTEGERS
-        quantity: parseInt(totalQuantity),
-        weight: Math.max(1, parseInt(totalWeight / 1000)), // kg
+        // Quantity & Weight (as NUMBERS)
+        quantity: totalQuantity,
+        weight: Math.max(1, Math.round(totalWeight / 1000)), // kg, min 1
+
+        // Dimensions (as NUMBERS)
         length: 15,
         height: 15,
         width: 15,
 
+        // Return reason
         return_reason: 'NA',
 
-        // Drop location - INTEGERS for phone/pin like PHP
+        // Drop location (delivery address) - EXACT structure from PHP
         drop_location: {
           location_type: 'Home',
-          address: `${shippingAddress.address}, ${shippingAddress.locality}`,
+          address: `${shippingAddress.address}, ${shippingAddress.locality}`.substring(0, 200),
           city: shippingAddress.city,
           state: shippingAddress.state,
           country: 'IND',
           name: shippingAddress.name.substring(0, 50),
-          phone: customerPhone, // INTEGER
-          pin: parseInt(shippingAddress.pincode) // INTEGER
+          phone: customerPhone, // NUMBER
+          pin: parseInt(shippingAddress.pincode, 10) // NUMBER
         },
 
-        // Pickup location - INTEGERS like PHP
+        // Pickup location - EXACT from PHP
         pickup_location: {
           location_type: 'Office',
           address: this.sellerDetails.address,
@@ -221,11 +195,11 @@ class EkartService {
           state: this.sellerDetails.state,
           country: 'IND',
           name: this.pickupLocationName,
-          phone: sellerPhone, // INTEGER
-          pin: parseInt(this.sellerDetails.pincode) // INTEGER
+          phone: sellerPhone, // NUMBER
+          pin: parseInt(this.sellerDetails.pincode, 10) // NUMBER
         },
 
-        // Return location - INTEGERS like PHP
+        // Return location - EXACT from PHP
         return_location: {
           location_type: 'Office',
           address: this.sellerDetails.address,
@@ -233,11 +207,11 @@ class EkartService {
           state: this.sellerDetails.state,
           country: 'IND',
           name: this.pickupLocationName,
-          phone: sellerPhone, // INTEGER
-          pin: parseInt(this.sellerDetails.pincode) // INTEGER
+          phone: sellerPhone, // NUMBER
+          pin: parseInt(this.sellerDetails.pincode, 10) // NUMBER
         },
 
-        // QC Details - MATCH PHP
+        // QC Details (optional but included like PHP)
         qc_details: {
           qc_shipment: true,
           product_name: 'string',
@@ -253,23 +227,35 @@ class EkartService {
           product_images: ['string']
         },
 
-        // Items array
-        items: itemsArray,
+        // Items array - like PHP
+        items: items.map((item, index) => ({
+          product_name: (item.name || 'Product').substring(0, 50),
+          sku: `SKU${orderData.orderId}_${index + 1}`,
+          taxable_value: Math.round((item.sellingPrice || 0) * (item.quantity || 1)),
+          description: productsDesc,
+          quantity: item.quantity || 1,
+          length: 15,
+          height: 15,
+          breadth: 15,
+          weight: Math.max(1, Math.round(((item.quantity || 1) * 500) / 1000)), // kg
+          hsn_code: '610910',
+          cgst_tax_value: 0,
+          sgst_tax_value: 0,
+          igst_tax_value: 0
+        })),
 
+        // What3words
         what3words_address: 'apple.orange.grapes'
       };
 
-      console.log('\n📋 Final Payload (Matching PHP):');
+      console.log('\n📋 Final Payload:');
       console.log(JSON.stringify(shipmentPayload, null, 2));
 
       // API call - Ekart uses PUT method
       const createURL = `${this.baseURL}/api/v1/package/create`;
       console.log('\n🌐 API Endpoint:', createURL);
 
-      const response = await axios({
-        method: 'PUT',
-        url: createURL,
-        data: shipmentPayload,
+      const response = await axios.put(createURL, shipmentPayload, {
         headers,
         timeout: 60000,
         validateStatus: (status) => status >= 200 && status < 500
@@ -278,27 +264,40 @@ class EkartService {
       console.log('\n📡 Response Status:', response.status);
       console.log('📡 Response Data:', JSON.stringify(response.data, null, 2));
 
-      // Success check - MATCH PHP validation
-      if (response.data && response.data.remark === 'Successfully created shipment') {
-        const trackingId = response.data.tracking_id;
+      // Success check
+      if (response.status >= 200 && response.status < 300 && response.data) {
+        const data = response.data;
+
+        // Extract tracking ID - check multiple possible fields
+        const trackingId = data.tracking_id || 
+                          data._id || 
+                          data.data?.tracking_id || 
+                          data.data?._id;
+
+        const awbNumber = data.barcodes?.wbn || 
+                         data.awb || 
+                         data.data?.awb || 
+                         trackingId;
 
         if (!trackingId) {
+          console.error('❌ No tracking ID in response');
           throw new Error('Shipment created but no tracking ID received');
         }
 
         console.log('\n✅✅✅ SHIPMENT CREATED SUCCESSFULLY');
         console.log('🎯 Tracking ID:', trackingId);
+        console.log('📋 AWB:', awbNumber);
         console.log('🚚 ====================================\n');
 
         return {
           success: true,
           tracking_id: trackingId,
-          awb_number: response.data.barcodes?.wbn || trackingId,
-          vendor: response.data.vendor || 'Ekart',
-          barcodes: response.data.barcodes,
+          awb_number: awbNumber,
+          vendor: data.vendor || 'Ekart',
+          barcodes: data.barcodes,
           status: 'created',
-          message: response.data.remark,
-          raw_response: response.data
+          message: data.message || data.remark || 'Shipment created successfully',
+          raw_response: data
         };
       }
 
@@ -306,9 +305,12 @@ class EkartService {
       const errorMsg = response.data?.message || 
                       response.data?.description || 
                       response.data?.remark || 
+                      response.data?.error ||
                       `API error: ${response.status}`;
 
       console.error('❌ API Error:', errorMsg);
+      console.error('Full response:', JSON.stringify(response.data, null, 2));
+
       throw new Error(errorMsg);
 
     } catch (error) {
@@ -320,6 +322,8 @@ class EkartService {
         console.error('Response:', JSON.stringify(error.response.data, null, 2));
       }
       
+      console.error('====================================\n');
+
       throw new Error(
         `Shipment creation failed: ${
           error.response?.data?.description || 
