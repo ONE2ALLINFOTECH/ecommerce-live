@@ -1,4 +1,4 @@
-// services/ekartService.js - FIXED VERSION
+// services/ekartService.js - COMPLETE FIXED VERSION
 const axios = require('axios');
 
 class EkartService {
@@ -109,7 +109,7 @@ class EkartService {
       const totalWeight = this.calculateWeight(items);
       const totalQuantity = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
       
-      // Amount calculations
+      // Amount calculations - Keep as NUMBERS
       const finalAmount = Number(orderData.finalAmount) || 0;
       const taxableAmount = Number((finalAmount / 1.18).toFixed(2));
       const taxValue = Number((finalAmount - taxableAmount).toFixed(2));
@@ -124,7 +124,7 @@ class EkartService {
         .join(', ')
         .substring(0, 100);
 
-      // ✅ FIXED PAYLOAD - Correct data types
+      // ✅ CRITICAL FIX: Send NUMBERS for amount fields, not strings
       const shipmentPayload = {
         // Seller info (strings)
         seller_name: this.sellerDetails.name,
@@ -144,11 +144,11 @@ class EkartService {
         category_of_goods: 'General',
         products_desc: productsDesc,
 
-        // Amounts (strings with 2 decimals)
-        total_amount: finalAmount.toFixed(2),
-        tax_value: taxValue.toFixed(2),
-        taxable_amount: taxableAmount.toFixed(2),
-        commodity_value: taxableAmount.toFixed(2),
+        // ⚠️ CRITICAL: These must be NUMBERS, not strings
+        total_amount: finalAmount,              // NUMBER ✅
+        tax_value: taxValue,                    // NUMBER ✅
+        taxable_amount: taxableAmount,          // NUMBER ✅
+        commodity_value: taxableAmount,         // NUMBER ✅
 
         // Quantity & Weight (strings)
         quantity: totalQuantity.toString(),
