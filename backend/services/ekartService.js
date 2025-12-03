@@ -13,8 +13,10 @@ class EkartService {
     this.accessToken = null;
     this.tokenExpiry = null;
 
-    // EXACT pickup location from PHP
-    this.pickupLocationName = 'DINDARPUR';
+    // IMPORTANT: Use the EXACT pickup location name from your Ekart dashboard
+    // Check your Ekart account under "Pickup Locations" for the exact name
+    this.pickupLocationName = process.env.EKART_PICKUP_LOCATION_NAME || 
+      'SHOPYMOL ( A UNIT OF ONE2ALL RECHARGE PRIVATE LIMITED )';
 
     this.sellerDetails = {
       name: 'ONE2ALL RECHARGE PRIVATE LIMITED',
