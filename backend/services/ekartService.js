@@ -33,7 +33,7 @@ class EkartService {
   async authenticate() {
     try {
       console.log('🔐 [Ekart] Authenticating...');
-      const authURL = `${this.baseURL}/integrations/v2/auth/token/${this.clientId}`;
+const authURL = `${this.baseURL}/integrations/v1/auth/token/${this.clientId}`;
 
       const response = await axios.post(
         authURL,
@@ -197,10 +197,10 @@ class EkartService {
       console.log(JSON.stringify(shipmentPayload, null, 2));
 
       // API call - Ekart uses PUT method
-      const createURL = `${this.baseURL}/api/v1/package/create`;
+const createURL = `${this.baseURL}/integrations/v1/shipment/create`;
       console.log('\n🌐 API Endpoint:', createURL);
 
-      const response = await axios.put(createURL, shipmentPayload, {
+     const response = await axios.post(createURL, shipmentPayload, {
         headers,
         timeout: 60000,
         validateStatus: (status) => status >= 200 && status < 500
