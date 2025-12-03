@@ -1,4 +1,4 @@
-// services/ekartService.js - FIXED VERSION
+// services/ekartService.js - COMPLETE WORKING VERSION
 const axios = require('axios');
 
 class EkartService {
@@ -95,7 +95,7 @@ class EkartService {
     return weight;
   }
 
-  // ================== CREATE SHIPMENT - FIXED ==================
+  // ================== CREATE SHIPMENT ==================
   async createShipment(orderData, shippingAddress, items) {
     try {
       console.log('\n🚚 ====== EKART: CREATE SHIPMENT START ======');
@@ -124,7 +124,7 @@ class EkartService {
         .join(', ')
         .substring(0, 100);
 
-      // ✅ FIXED PAYLOAD - Correct data types
+      // ✅ CORRECT PAYLOAD - All proper data types
       const shipmentPayload = {
         // Seller info (strings)
         seller_name: this.sellerDetails.name,
