@@ -47,7 +47,8 @@ function App() {
         <Route path="/order-success" element={<OrderSuccess />} />
         <Route path="/order-status" element={<OrderStatus />} />
         <Route path="/orders" element={<AdminOrders />} />
-        
+                <Route path="/user-orders" element={<MyOrders />} />
+
         {/* Admin Auth Routes */}
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
