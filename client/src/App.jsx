@@ -46,7 +46,7 @@ function App() {
         <Route path="/checkout-customer" element={<CheckoutCustomer />} />
         <Route path="/order-success" element={<OrderSuccess />} />
         <Route path="/order-status" element={<OrderStatus />} />
-        <Route path="/orders" element={<MyOrders />} />
+        <Route path="/orders" element={<AdminOrders />} />
         
         {/* Admin Auth Routes */}
         <Route path="/login" element={<Login />} />
