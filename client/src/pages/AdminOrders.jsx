@@ -18,9 +18,26 @@ const AdminOrders = () => {
   const fetchOrders = async () => {
     try {
       const { data } = await API.get('/orders/admin/all');
-      setOrders(data);
+      
+      console.log('📦 Raw API Response:', data);
+      
+      // Handle both array and object response formats
+      let ordersArray;
+      if (Array.isArray(data)) {
+        ordersArray = data;
+      } else if (data.orders && Array.isArray(data.orders)) {
+        ordersArray = data.orders;
+      } else {
+        console.error('❌ Unexpected response format:', data);
+        ordersArray = [];
+      }
+      
+      console.log('✅ Parsed orders:', ordersArray.length, 'orders');
+      setOrders(ordersArray);
     } catch (error) {
-      console.error('Failed to fetch orders:', error);
+      console.error('❌ Failed to fetch orders:', error);
+      console.error('Response:', error.response?.data);
+      alert('Failed to load orders: ' + (error.response?.data?.message || error.message));
     } finally {
       setLoading(false);
     }
