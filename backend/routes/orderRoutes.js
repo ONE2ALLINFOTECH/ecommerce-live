@@ -8,6 +8,18 @@ const stripe = require('../config/stripe');
 const EkartService = require('../services/ekartService');
 
 // ================== CREATE ORDER ==================
+
+router.get('/admin/all', protectAdmin, async (req, res) => {
+  try {
+    const orders = await Order.find()
+      .populate('user', 'username email')
+      .populate('items.productId', 'name')
+      .sort({ createdAt: -1 });
+    res.json(orders);
+  } catch (error) {
+    res.status(500).json({ message: 'Failed to fetch orders', error: error.message });
+  }
+});
 router.post('/create', protectCustomer, async (req, res) => {
   try {
     const { shippingAddress, paymentMethod } = req.body;
