@@ -9,7 +9,6 @@ const User = require('../models/User'); // Adjust path as needed
 const stripe = require('../config/stripe');
 const EkartService = require('../services/ekartService');
 
-// ================== ADMIN MIDDLEWARE ==================
 const protectAdmin = async (req, res, next) => {
   try {
     let token;
@@ -21,26 +20,28 @@ const protectAdmin = async (req, res, next) => {
       return res.status(401).json({ message: 'Not authorized, no token' });
     }
 
+    const jwt = require('jsonwebtoken');
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    
+    // ✅ SIMPLE: Just check if user exists (no role check)
+    const User = require('../models/User');
     const user = await User.findById(decoded.id).select('-password');
 
     if (!user) {
-      return res.status(401).json({ message: 'Not authorized, user not found' });
+      return res.status(401).json({ message: 'User not found' });
     }
 
-    // Check if user is admin (adjust based on your schema)
-    if (user.role !== 'admin') {
-      return res.status(403).json({ message: 'Admin access required' });
-    }
-
+    console.log('✅ User authenticated:', user.email);
     req.admin = user;
     next();
   } catch (error) {
-    console.error('Admin auth error:', error);
-    return res.status(401).json({ message: 'Not authorized, token failed' });
+    console.error('❌ Auth error:', error.message);
+    return res.status(401).json({ 
+      message: 'Not authorized',
+      error: error.message 
+    });
   }
 };
-
 // ================== CUSTOMER ROUTES ==================
 
 // CREATE ORDER
