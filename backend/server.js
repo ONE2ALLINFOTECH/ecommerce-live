@@ -27,9 +27,9 @@ if (missingVars.length > 0) {
 // 🔥 FIXED CORS
 const allowedOrigins = [
   "https://ecommerce-live-gp7kyznuf-one2allinfotechs-projects.vercel.app",
+  "https://ecommerce-live-v8yt.onrender.com", // Add this
   "http://localhost:3000",
 ];
-
 app.use(
   cors({
     origin: function (origin, callback) {
