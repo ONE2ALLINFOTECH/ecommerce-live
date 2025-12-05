@@ -1,3 +1,31 @@
 # Ignore environment files
+# Environment files
 .env
 *.env
+
+# Node dependencies
+node_modules/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+*.log
+
+# Build output
+dist/
+build/
+
+# Coverage reports
+coverage/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+
+# Optional
+*.cache
