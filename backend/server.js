@@ -26,7 +26,7 @@ if (missingVars.length > 0) {
 
 // 🔥 FIXED CORS
 const allowedOrigins = [
-  "https://ecomerce-indol-eight.vercel.app",
+  "https://ecommerce-live-ten.vercel.app",
   "http://localhost:3000",
 ];
 
