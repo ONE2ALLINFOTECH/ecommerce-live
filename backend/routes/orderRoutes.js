@@ -908,3 +908,52 @@ router.put('/admin/cancel/:orderId', protectAdmin, async (req, res) => {
     });
   }
 });
+
+// ADMIN STATS
+router.get('/admin/stats/overview', protectAdmin, async (req, res) => {
+  try {
+    const totalOrders = await Order.countDocuments();
+    const pendingOrders = await Order.countDocuments({ orderStatus: 'pending' });
+    const confirmedOrders = await Order.countDocuments({ orderStatus: 'confirmed' });
+    const shippedOrders = await Order.countDocuments({ orderStatus: 'shipped' });
+    const deliveredOrders = await Order.countDocuments({ orderStatus: 'delivered' });
+    const cancelledOrders = await Order.countDocuments({ orderStatus: 'cancelled' });
+
+    const totalRevenue = await Order.aggregate([
+      { $match: { paymentStatus: 'success' } },
+      { $group: { _id: null, total: { $sum: '$finalAmount' } } }
+    ]);
+
+    const withShipment = await Order.countDocuments({ 
+      ekartTrackingId: { $exists: true, $ne: null } 
+    });
+    const withoutShipment = totalOrders - withShipment;
+
+    res.json({
+      totalOrders,
+      ordersByStatus: {
+        pending: pendingOrders,
+        confirmed: confirmedOrders,
+        shipped: shippedOrders,
+        delivered: deliveredOrders,
+        cancelled: cancelledOrders
+      },
+      totalRevenue: totalRevenue[0]?.total || 0,
+      shipmentStats: {
+        withShipment,
+        withoutShipment,
+        shipmentRate: totalOrders > 0 
+          ? ((withShipment / totalOrders) * 100).toFixed(2) + '%'
+          : '0%'
+      }
+    });
+  } catch (error) {
+    console.error('❌ Admin stats error:', error);
+    res.status(500).json({
+      message: 'Failed to fetch stats',
+      error: error.message
+    });
+  }
+});
+
+module.exports = router;
