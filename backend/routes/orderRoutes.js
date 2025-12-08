@@ -1,11 +1,11 @@
-// routes/orderRoutes.js - COMPLETE WITH ADMIN ROUTES
+// routes/orderRoutes.js - COMPLETE WITH ADMIN ROUTES + EKART CANCELLATION
 const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
 const { protectCustomer } = require('../middlewares/authCustomerMiddleware');
 const Order = require('../models/Order');
 const Cart = require('../models/Cart');
-const User = require('../models/User'); // Adjust path as needed
+const User = require('../models/User');
 const stripe = require('../config/stripe');
 const EkartService = require('../services/ekartService');
 
@@ -23,7 +23,6 @@ const protectAdmin = async (req, res, next) => {
     const jwt = require('jsonwebtoken');
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     
-    // ✅ SIMPLE: Just check if user exists (no role check)
     const User = require('../models/User');
     const user = await User.findById(decoded.id).select('-password');
 
@@ -42,6 +41,7 @@ const protectAdmin = async (req, res, next) => {
     });
   }
 };
+
 // ================== CUSTOMER ROUTES ==================
 
 // CREATE ORDER
@@ -463,47 +463,83 @@ router.get('/track/:orderId', protectCustomer, async (req, res) => {
   }
 });
 
-// CANCEL ORDER
+// ========== ✅ UPDATED CANCEL ORDER - USER ========== 
 router.put('/cancel/:orderId', protectCustomer, async (req, res) => {
   try {
     const { orderId } = req.params;
+    
+    console.log('\n🗑️ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('📦 CUSTOMER CANCELLING ORDER:', orderId);
+    console.log('👤 User ID:', req.user._id);
+    
     const order = await Order.findOne({ orderId, user: req.user._id });
 
     if (!order) {
       return res.status(404).json({ message: 'Order not found' });
     }
 
+    // Check if order can be cancelled
     if (['shipped', 'delivered'].includes(order.orderStatus)) {
       return res.status(400).json({
-        message: 'Cannot cancel. Already shipped/delivered.'
+        message: 'Cannot cancel. Order already shipped/delivered.'
       });
     }
 
     if (order.orderStatus === 'cancelled') {
-      return res.status(400).json({ message: 'Already cancelled' });
+      return res.status(400).json({ message: 'Order already cancelled' });
     }
+
+    // ✅ EKART CANCELLATION - If shipment exists
+    let ekartCancelled = false;
+    let ekartCancelError = null;
 
     if (order.ekartTrackingId) {
       try {
-        await EkartService.cancelShipment(order.ekartTrackingId);
-        console.log('✅ Ekart shipment cancelled');
-      } catch (error) {
-        console.error('❌ Ekart cancel failed:', error.message);
+        console.log('🚚 Cancelling Ekart shipment:', order.ekartTrackingId);
+        const cancelResult = await EkartService.cancelShipment(order.ekartTrackingId);
+        
+        if (cancelResult.success) {
+          ekartCancelled = true;
+          console.log('✅ Ekart shipment cancelled successfully');
+        } else {
+          ekartCancelError = cancelResult.message || 'Cancellation failed';
+          console.warn('⚠️ Ekart cancellation warning:', ekartCancelError);
+        }
+      } catch (ekartError) {
+        ekartCancelError = ekartError.message;
+        console.error('❌ Ekart cancel error:', ekartError.message);
+        // Continue with order cancellation even if Ekart fails
       }
+    } else {
+      console.log('ℹ️ No Ekart shipment to cancel');
     }
 
+    // Update order status
     order.orderStatus = 'cancelled';
-    order.paymentStatus = 'cancelled';
+    order.paymentStatus = order.paymentStatus === 'success' ? 'success' : 'cancelled';
     await order.save();
 
+    console.log('✅ Order cancelled in database');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+
     res.json({
+      success: true,
       message: 'Order cancelled successfully',
-      order
+      orderId: order.orderId,
+      orderStatus: order.orderStatus,
+      ekartCancelled,
+      ekartCancelError,
+      order: {
+        orderId: order.orderId,
+        orderStatus: order.orderStatus,
+        paymentStatus: order.paymentStatus,
+        finalAmount: order.finalAmount
+      }
     });
   } catch (error) {
-    console.error('❌ Cancel error:', error);
+    console.error('❌ Cancel order error:', error);
     res.status(500).json({
-      message: 'Failed to cancel',
+      message: 'Failed to cancel order',
       error: error.message
     });
   }
@@ -631,7 +667,6 @@ router.get('/admin/all', protectAdmin, async (req, res) => {
 
     const total = await Order.countDocuments();
 
-    // Add tracking URLs
     const ordersWithTracking = orders.map(order => {
       const orderObj = order.toObject();
       orderObj.publicTrackingUrl = order.ekartTrackingId
@@ -709,7 +744,6 @@ router.get('/admin/order/:orderId', protectAdmin, async (req, res) => {
       return res.status(404).json({ message: 'Order not found' });
     }
 
-    // Get tracking info
     let trackingInfo = null;
     if (order.ekartTrackingId) {
       try {
@@ -792,51 +826,85 @@ router.post('/admin/create-shipment/:orderId', protectAdmin, async (req, res) =>
   }
 });
 
-// ADMIN STATS
-router.get('/admin/stats/overview', protectAdmin, async (req, res) => {
+// ========== ✅ NEW: ADMIN CANCEL ORDER WITH EKART ========== 
+router.put('/admin/cancel/:orderId', protectAdmin, async (req, res) => {
   try {
-    const totalOrders = await Order.countDocuments();
-    const pendingOrders = await Order.countDocuments({ orderStatus: 'pending' });
-    const confirmedOrders = await Order.countDocuments({ orderStatus: 'confirmed' });
-    const shippedOrders = await Order.countDocuments({ orderStatus: 'shipped' });
-    const deliveredOrders = await Order.countDocuments({ orderStatus: 'delivered' });
-    const cancelledOrders = await Order.countDocuments({ orderStatus: 'cancelled' });
+    const { orderId } = req.params;
+    
+    console.log('\n🗑️ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('📦 ADMIN CANCELLING ORDER:', orderId);
+    console.log('👤 Admin:', req.admin.email);
+    
+    const order = await Order.findOne({ orderId });
 
-    const totalRevenue = await Order.aggregate([
-      { $match: { paymentStatus: 'success' } },
-      { $group: { _id: null, total: { $sum: '$finalAmount' } } }
-    ]);
+    if (!order) {
+      return res.status(404).json({ message: 'Order not found' });
+    }
 
-    const withShipment = await Order.countDocuments({ 
-      ekartTrackingId: { $exists: true, $ne: null } 
-    });
-    const withoutShipment = totalOrders - withShipment;
+    // Check if order can be cancelled
+    if (['shipped', 'delivered'].includes(order.orderStatus)) {
+      return res.status(400).json({
+        message: 'Cannot cancel. Order already shipped/delivered.'
+      });
+    }
+
+    if (order.orderStatus === 'cancelled') {
+      return res.status(400).json({ message: 'Order already cancelled' });
+    }
+
+    // ✅ EKART CANCELLATION - If shipment exists
+    let ekartCancelled = false;
+    let ekartCancelError = null;
+
+    if (order.ekartTrackingId) {
+      try {
+        console.log('🚚 Admin cancelling Ekart shipment:', order.ekartTrackingId);
+        const cancelResult = await EkartService.cancelShipment(order.ekartTrackingId);
+        
+        if (cancelResult.success) {
+          ekartCancelled = true;
+          console.log('✅ Ekart shipment cancelled by admin');
+        } else {
+          ekartCancelError = cancelResult.message || 'Cancellation failed';
+          console.warn('⚠️ Ekart cancellation warning:', ekartCancelError);
+        }
+      } catch (ekartError) {
+        ekartCancelError = ekartError.message;
+        console.error('❌ Ekart cancel error:', ekartError.message);
+        // Continue with order cancellation even if Ekart fails
+      }
+    } else {
+      console.log('ℹ️ No Ekart shipment to cancel');
+    }
+
+    // Update order status
+    order.orderStatus = 'cancelled';
+    order.paymentStatus = order.paymentStatus === 'success' ? 'success' : 'cancelled';
+    await order.save();
+
+    console.log('✅ Order cancelled by admin');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 
     res.json({
-      totalOrders,
-      ordersByStatus: {
-        pending: pendingOrders,
-        confirmed: confirmedOrders,
-        shipped: shippedOrders,
-        delivered: deliveredOrders,
-        cancelled: cancelledOrders
-      },
-      totalRevenue: totalRevenue[0]?.total || 0,
-      shipmentStats: {
-        withShipment,
-        withoutShipment,
-        shipmentRate: totalOrders > 0 
-          ? ((withShipment / totalOrders) * 100).toFixed(2) + '%'
-          : '0%'
+      success: true,
+      message: 'Order cancelled successfully by admin',
+      orderId: order.orderId,
+      orderStatus: order.orderStatus,
+      ekartCancelled,
+      ekartCancelError,
+      order: {
+        orderId: order.orderId,
+        orderStatus: order.orderStatus,
+        paymentStatus: order.paymentStatus,
+        finalAmount: order.finalAmount,
+        user: order.user
       }
     });
   } catch (error) {
-    console.error('❌ Admin stats error:', error);
+    console.error('❌ Admin cancel order error:', error);
     res.status(500).json({
-      message: 'Failed to fetch stats',
+      message: 'Failed to cancel order',
       error: error.message
     });
   }
 });
-
-module.exports = router;

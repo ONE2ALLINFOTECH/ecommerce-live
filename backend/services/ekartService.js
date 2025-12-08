@@ -1,4 +1,4 @@
-// services/ekartService.js - FIXED VERSION
+// services/ekartService.js - COMPLETE WITH PROPER CANCELLATION
 const axios = require('axios');
 
 class EkartService {
@@ -32,7 +32,6 @@ class EkartService {
   async authenticate() {
     try {
       console.log('🔐 [Ekart] Authenticating...');
-      // ✅ CORRECT: Using v2 endpoint as per docs
       const authURL = `${this.baseURL}/integrations/v2/auth/token/${this.clientId}`;
 
       const response = await axios.post(
@@ -91,7 +90,7 @@ class EkartService {
 
   calculateWeight(items) {
     const totalItems = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
-    const weight = Math.max(totalItems * 500, 1000); // Min 1kg
+    const weight = Math.max(totalItems * 500, 1000);
     return weight;
   }
 
@@ -105,65 +104,43 @@ class EkartService {
 
       const headers = await this.createHeaders();
 
-      // Weight & Quantity
       const totalWeight = this.calculateWeight(items);
       const totalQuantity = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
       
-      // Amount calculations
       const finalAmount = Number(orderData.finalAmount) || 0;
       const taxableAmount = Number((finalAmount / 1.18).toFixed(2));
       const taxValue = Number((finalAmount - taxableAmount).toFixed(2));
 
-      // Phone validation
       const customerPhone = this.formatPhone(shippingAddress.mobile);
       const sellerPhone = this.formatPhone(this.sellerDetails.phone);
 
-      // Products description
       const productsDesc = items
         .map(item => item.name || 'Product')
         .join(', ')
         .substring(0, 100);
 
-      // ✅ CORRECT PAYLOAD - All proper data types as per docs
       const shipmentPayload = {
-        // Seller info (strings)
         seller_name: this.sellerDetails.name,
         seller_address: `${this.sellerDetails.address}, ${this.sellerDetails.city}, ${this.sellerDetails.state}, ${this.sellerDetails.pincode}`,
         seller_gst_tin: this.sellerDetails.gst_tin,
-
-        // Required fields
         consignee_name: shippingAddress.name.substring(0, 50),
         consignee_gst_amount: 0,
-
-        // Order info (strings)
         order_number: orderData.orderId.toString(),
         invoice_number: orderData.orderId.toString(),
         invoice_date: new Date().toISOString().split('T')[0],
-
-        // Payment (strings)
         payment_mode: orderData.paymentMethod === 'cod' ? 'COD' : 'Prepaid',
         cod_amount: orderData.paymentMethod === 'cod' ? finalAmount : 0,
-
-        // Product info (strings)
         category_of_goods: 'General',
         products_desc: productsDesc,
-
-        // Amounts (numbers as per docs - NOT strings!)
         total_amount: finalAmount,
         tax_value: taxValue,
         taxable_amount: taxableAmount,
         commodity_value: taxableAmount.toFixed(2),
-
-        // Quantity & Weight (integers)
         quantity: totalQuantity,
-        weight: totalWeight, // in grams
-
-        // Dimensions (integers in cm)
+        weight: totalWeight,
         length: 15,
         height: 15,
         width: 15,
-
-        // Drop location (delivery address)
         drop_location: {
           name: shippingAddress.name.substring(0, 50),
           phone: parseInt(customerPhone, 10),
@@ -173,8 +150,6 @@ class EkartService {
           state: shippingAddress.state,
           country: 'India'
         },
-
-        // Pickup location (warehouse)
         pickup_location: {
           name: this.pickupLocationName,
           phone: parseInt(sellerPhone, 10),
@@ -184,8 +159,6 @@ class EkartService {
           state: this.sellerDetails.state,
           country: 'India'
         },
-
-        // Return location (same as pickup)
         return_location: {
           name: this.pickupLocationName,
           phone: parseInt(sellerPhone, 10),
@@ -200,7 +173,6 @@ class EkartService {
       console.log('\n📋 Final Payload:');
       console.log(JSON.stringify(shipmentPayload, null, 2));
 
-      // ✅✅✅ MAIN FIX: USE PUT METHOD, NOT POST! ✅✅✅
       const createURL = `${this.baseURL}/api/v1/package/create`;
       console.log('\n🌐 API Endpoint:', createURL);
 
@@ -213,11 +185,8 @@ class EkartService {
       console.log('\n📡 Response Status:', response.status);
       console.log('📡 Response Data:', JSON.stringify(response.data, null, 2));
 
-      // Success check
       if (response.status >= 200 && response.status < 300 && response.data) {
         const data = response.data;
-
-        // Extract tracking ID
         const trackingId = data.tracking_id || data._id || data.data?.tracking_id || data.data?._id;
         const awbNumber = data.barcodes?.wbn || data.awb || data.data?.awb || trackingId;
 
@@ -243,7 +212,6 @@ class EkartService {
         };
       }
 
-      // Error response
       const errorMsg = response.data?.message || 
                       response.data?.description || 
                       response.data?.remark || 
@@ -252,7 +220,6 @@ class EkartService {
 
       console.error('❌ API Error:', errorMsg);
       console.error('Full response:', JSON.stringify(response.data, null, 2));
-
       throw new Error(errorMsg);
 
     } catch (error) {
@@ -276,38 +243,103 @@ class EkartService {
     }
   }
 
-  // ================== CANCEL SHIPMENT ==================
+  // ================== ✅ UPDATED CANCEL SHIPMENT ==================
   async cancelShipment(trackingId) {
     try {
-      console.log('🗑️ Canceling shipment:', trackingId);
+      console.log('\n🗑️ ====== EKART: CANCEL SHIPMENT START ======');
+      console.log('📦 Tracking ID:', trackingId);
+      
       const headers = await this.createHeaders();
 
-      const response = await axios.delete(
-        `${this.baseURL}/api/v1/package/cancel`,
-        {
-          params: { tracking_id: trackingId },
-          headers,
-          timeout: 30000
-        }
-      );
+      // ✅ CORRECT: Using DELETE method with query parameter as per docs
+      const cancelURL = `${this.baseURL}/api/v1/package/cancel`;
+      console.log('🌐 Cancel URL:', cancelURL);
+      console.log('🔍 Query Params: tracking_id =', trackingId);
 
-      console.log('✅ Shipment cancelled');
-      return {
-        success: true,
-        message: response.data.message || 'Cancelled',
-        data: response.data
-      };
-    } catch (error) {
-      console.error('❌ Cancel failed:', error.response?.data || error.message);
+      const response = await axios.delete(cancelURL, {
+        params: { tracking_id: trackingId },
+        headers,
+        timeout: 30000,
+        validateStatus: (status) => status >= 200 && status < 500
+      });
 
-      if (error.response?.status === 404) {
+      console.log('📡 Response Status:', response.status);
+      console.log('📡 Response Data:', JSON.stringify(response.data, null, 2));
+
+      // ✅ Success response
+      if (response.status >= 200 && response.status < 300) {
+        console.log('✅✅✅ SHIPMENT CANCELLED SUCCESSFULLY');
+        console.log('📦 Tracking ID:', trackingId);
+        console.log('💬 Message:', response.data.remark || response.data.message);
+        console.log('🗑️ ====================================\n');
+
         return {
           success: true,
-          message: 'Shipment not found or already cancelled'
+          tracking_id: trackingId,
+          message: response.data.remark || response.data.message || 'Shipment cancelled successfully',
+          status: response.data.status,
+          data: response.data
         };
       }
 
-      throw new Error(`Cancellation failed: ${error.response?.data?.message || error.message}`);
+      // ⚠️ 404 - Shipment not found or already cancelled
+      if (response.status === 404) {
+        console.warn('⚠️ Shipment not found or already cancelled');
+        console.log('🗑️ ====================================\n');
+        
+        return {
+          success: true,
+          tracking_id: trackingId,
+          message: 'Shipment not found or already cancelled',
+          warning: true
+        };
+      }
+
+      // ❌ Other error responses
+      const errorMsg = response.data?.message || 
+                      response.data?.remark || 
+                      response.data?.description ||
+                      `Cancellation failed with status ${response.status}`;
+      
+      console.error('❌ Cancellation Error:', errorMsg);
+      console.log('🗑️ ====================================\n');
+
+      return {
+        success: false,
+        tracking_id: trackingId,
+        message: errorMsg,
+        error: true
+      };
+
+    } catch (error) {
+      console.error('\n❌❌❌ SHIPMENT CANCELLATION FAILED');
+      console.error('Error:', error.message);
+      
+      if (error.response) {
+        console.error('Status:', error.response.status);
+        console.error('Response:', JSON.stringify(error.response.data, null, 2));
+      }
+      
+      console.error('🗑️ ====================================\n');
+
+      // ⚠️ Special handling for 404
+      if (error.response?.status === 404) {
+        return {
+          success: true,
+          tracking_id: trackingId,
+          message: 'Shipment not found or already cancelled',
+          warning: true
+        };
+      }
+
+      // ❌ Other errors
+      throw new Error(
+        `Cancellation failed: ${
+          error.response?.data?.message || 
+          error.response?.data?.description ||
+          error.message
+        }`
+      );
     }
   }
 

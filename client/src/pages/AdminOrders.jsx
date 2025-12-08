@@ -6,6 +6,7 @@ const AdminOrders = () => {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [updatingOrder, setUpdatingOrder] = useState(null);
+  const [cancellingOrder, setCancellingOrder] = useState(null);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [trackingInfo, setTrackingInfo] = useState(null);
   const [loadingTracking, setLoadingTracking] = useState(false);
@@ -21,7 +22,6 @@ const AdminOrders = () => {
       
       console.log('📦 Raw API Response:', data);
       
-      // Handle both array and object response formats
       let ordersArray;
       if (Array.isArray(data)) {
         ordersArray = data;
@@ -47,6 +47,7 @@ const AdminOrders = () => {
     setUpdatingOrder(orderId);
     try {
       await API.put(`/orders/admin/update-status/${orderId}`, { orderStatus: newStatus });
+      alert('Order status updated successfully!');
       fetchOrders();
     } catch (error) {
       console.error('Failed to update order status:', error);
@@ -56,12 +57,39 @@ const AdminOrders = () => {
     }
   };
 
+  // ✅ NEW: Admin Cancel Order Function
+  const cancelOrder = async (orderId) => {
+    if (!confirm(`Are you sure you want to cancel order ${orderId}?\n\nThis will also cancel the Ekart shipment if exists.`)) {
+      return;
+    }
+    
+    setCancellingOrder(orderId);
+    try {
+      const { data } = await API.put(`/orders/admin/cancel/${orderId}`);
+      
+      let message = data.message || 'Order cancelled successfully!';
+      
+      if (data.ekartCancelled) {
+        message += '\n✅ Ekart shipment cancelled.';
+      } else if (data.ekartCancelError) {
+        message += `\n⚠️ Ekart cancellation: ${data.ekartCancelError}`;
+      }
+      
+      alert(message);
+      fetchOrders();
+    } catch (error) {
+      alert(error.response?.data?.message || 'Failed to cancel order');
+    } finally {
+      setCancellingOrder(null);
+    }
+  };
+
   const createShipment = async (orderId) => {
     if (!confirm('Create Ekart shipment for this order?')) return;
     
     setCreatingShipment(orderId);
     try {
-      const { data } = await API.post(`/orders/create-shipment/${orderId}`);
+      const { data } = await API.post(`/orders/admin/create-shipment/${orderId}`);
       alert(`Shipment created!\nTracking ID: ${data.trackingId}\nAWB: ${data.awb}`);
       fetchOrders();
     } catch (error) {
@@ -108,6 +136,10 @@ const AdminOrders = () => {
       case 'failed': return 'bg-red-100 text-red-800';
       default: return 'bg-gray-100 text-gray-800';
     }
+  };
+
+  const canCancelOrder = (order) => {
+    return !['shipped', 'delivered', 'cancelled'].includes(order.orderStatus);
   };
 
   if (loading) {
@@ -249,16 +281,17 @@ const AdminOrders = () => {
                   <td className="px-6 py-4 whitespace-nowrap text-sm space-y-2">
                     <button
                       onClick={() => viewOrderDetails(order)}
-                      className="flex items-center gap-1 text-blue-600 hover:text-blue-800"
+                      className="flex items-center gap-1 text-blue-600 hover:text-blue-800 mb-2"
                     >
                       <Eye className="w-4 h-4" />
                       View Details
                     </button>
+                    
                     <select
                       value={order.orderStatus}
                       onChange={(e) => updateOrderStatus(order.orderId, e.target.value)}
                       disabled={updatingOrder === order.orderId}
-                      className="block w-full px-2 py-1 text-xs border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                      className="block w-full px-2 py-1 text-xs border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 mb-2"
                     >
                       <option value="pending">Pending</option>
                       <option value="confirmed">Confirmed</option>
@@ -266,6 +299,26 @@ const AdminOrders = () => {
                       <option value="delivered">Delivered</option>
                       <option value="cancelled">Cancelled</option>
                     </select>
+
+                    {canCancelOrder(order) && (
+                      <button
+                        onClick={() => cancelOrder(order.orderId)}
+                        disabled={cancellingOrder === order.orderId}
+                        className="flex items-center gap-1 text-red-600 hover:text-red-800 disabled:opacity-50"
+                      >
+                        {cancellingOrder === order.orderId ? (
+                          <>
+                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-600"></div>
+                            Cancelling...
+                          </>
+                        ) : (
+                          <>
+                            <X className="w-4 h-4" />
+                            Cancel Order
+                          </>
+                        )}
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -412,6 +465,20 @@ const AdminOrders = () => {
                   <span>₹{selectedOrder.finalAmount}</span>
                 </div>
               </div>
+
+              {/* Cancel Button in Modal */}
+              {canCancelOrder(selectedOrder) && (
+                <button
+                  onClick={() => {
+                    closeModal();
+                    cancelOrder(selectedOrder.orderId);
+                  }}
+                  className="w-full py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center justify-center gap-2"
+                >
+                  <X className="w-5 h-5" />
+                  Cancel This Order
+                </button>
+              )}
             </div>
           </div>
         </div>
