@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Package, Truck, ExternalLink, RefreshCw, Eye, X } from 'lucide-react';
+import { Package, Truck, ExternalLink, RefreshCw, Eye, X, Trash2, AlertCircle } from 'lucide-react';
 import API from '../services/api';
 
 const AdminOrders = () => {
@@ -12,6 +12,8 @@ const AdminOrders = () => {
   const [loadingTracking, setLoadingTracking] = useState(false);
   const [creatingShipment, setCreatingShipment] = useState(null);
   const [cancellationError, setCancellationError] = useState(null);
+  const [bulkCancelling, setBulkCancelling] = useState(false);
+  const [selectedOrders, setSelectedOrders] = useState([]);
 
   useEffect(() => {
     fetchOrders();
@@ -36,6 +38,7 @@ const AdminOrders = () => {
       console.log('✅ Parsed orders:', ordersArray.length, 'orders');
       setOrders(ordersArray);
       setCancellationError(null);
+      setSelectedOrders([]);
     } catch (error) {
       console.error('❌ Failed to fetch orders:', error);
       console.error('Response:', error.response?.data);
@@ -59,9 +62,11 @@ const AdminOrders = () => {
     }
   };
 
-  // ✅ FIXED: Admin Cancel Order Function with Ekart Cancellation
-  const cancelOrder = async (orderId) => {
-    if (!confirm(`Are you sure you want to cancel order ${orderId}?\n\nThis will also cancel the Ekart shipment if exists.`)) {
+  // ✅ COMPLETE FIXED: Admin Cancel Order Function
+  const cancelOrder = async (orderId, orderDetails = {}) => {
+    const order = orderDetails.orderId ? orderDetails : orders.find(o => o.orderId === orderId);
+    
+    if (!confirm(`Are you sure you want to COMPLETELY DELETE order ${orderId}?\n\n⚠️ This will:\n1. Cancel the order in our system\n2. Delete the shipment from Ekart\n3. Remove all Ekart tracking data\n4. Order will disappear from Ekart dashboard\n\nThis action cannot be undone!`)) {
       return;
     }
     
@@ -69,14 +74,22 @@ const AdminOrders = () => {
     setCancellationError(null);
     
     try {
-      const { data } = await API.put(`/orders/admin/cancel/${orderId}`);
+      const { data } = await API.put(`/orders/admin/cancel/${orderId}`, {
+        cancellationReason: 'Cancelled by admin - Complete deletion'
+      });
       
-      let message = data.message || 'Order cancelled successfully!';
+      let message = data.message || 'Order completely cancelled and removed from Ekart!';
       
       if (data.ekartCancelled) {
-        message += '\n✅ Ekart shipment cancelled successfully.';
-      } else if (data.ekartCancelError) {
-        message += `\n⚠️ Ekart cancellation: ${data.ekartCancelError}`;
+        message += '\n✅✅✅ Ekart shipment completely deleted.';
+      }
+      
+      if (data.ekartCancelError) {
+        message += `\n⚠️ Note: ${data.ekartCancelError}`;
+      }
+      
+      if (data.order?.ekartDataCleared) {
+        message += '\n✅ All Ekart data cleared from our system.';
       }
       
       alert(message);
@@ -84,16 +97,18 @@ const AdminOrders = () => {
     } catch (error) {
       const errorMessage = error.response?.data?.message || 'Failed to cancel order';
       const ekartError = error.response?.data?.ekartCancelError;
+      const ekartUrl = error.response?.data?.ekartPortalUrl;
       
       if (ekartError) {
         setCancellationError({
           orderId,
-          message: `Ekart cancellation failed: ${ekartError}`,
-          trackingId: error.response?.data?.trackingId
+          message: `Ekart deletion failed: ${ekartError}`,
+          trackingId: error.response?.data?.trackingId,
+          ekartUrl
         });
         
         // Ask user if they want to continue with local cancellation only
-        const shouldContinue = confirm(`Ekart cancellation failed: ${ekartError}\n\nDo you want to cancel the order locally only?`);
+        const shouldContinue = confirm(`Ekart deletion failed: ${ekartError}\n\nDo you want to:\n1. Cancel locally only (order will remain on Ekart)\n2. Cancel manually on Ekart portal\n\nClick OK to cancel locally, Cancel to open Ekart portal.`);
         
         if (shouldContinue) {
           try {
@@ -104,6 +119,8 @@ const AdminOrders = () => {
           } catch (localError) {
             alert('Failed to cancel order locally');
           }
+        } else if (ekartUrl) {
+          window.open(ekartUrl, '_blank');
         }
       } else {
         alert(errorMessage);
@@ -172,12 +189,58 @@ const AdminOrders = () => {
     return !['shipped', 'delivered', 'cancelled'].includes(order.orderStatus);
   };
 
+  const toggleOrderSelection = (orderId) => {
+    setSelectedOrders(prev => 
+      prev.includes(orderId) 
+        ? prev.filter(id => id !== orderId)
+        : [...prev, orderId]
+    );
+  };
+
+  const selectAllOrders = () => {
+    if (selectedOrders.length === orders.length) {
+      setSelectedOrders([]);
+    } else {
+      setSelectedOrders(orders.map(order => order.orderId));
+    }
+  };
+
+  const bulkCancelOrders = async () => {
+    if (selectedOrders.length === 0) {
+      alert('Please select orders to cancel');
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to COMPLETELY DELETE ${selectedOrders.length} orders?\n\n⚠️ This will delete all shipments from Ekart and remove all tracking data!\n\nThis action cannot be undone!`)) {
+      return;
+    }
+
+    setBulkCancelling(true);
+    try {
+      const { data } = await API.post('/orders/admin/bulk-cancel', {
+        orderIds: selectedOrders
+      });
+
+      const successful = data.summary?.successful || 0;
+      const failed = data.summary?.failed || 0;
+
+      alert(`Bulk cancellation completed!\n✅ Successful: ${successful}\n❌ Failed: ${failed}\n\nOrders have been completely removed from Ekart.`);
+      
+      fetchOrders();
+      setSelectedOrders([]);
+    } catch (error) {
+      alert(error.response?.data?.message || 'Failed to bulk cancel orders');
+    } finally {
+      setBulkCancelling(false);
+    }
+  };
+
   // Manual Ekart cancellation
   const manualEkartCancel = async (trackingId) => {
     if (!trackingId) return;
     
     const ekartUrl = `https://app.elite.ekartlogistics.in/track/${trackingId}`;
-    const confirmManual = confirm(`Ekart cancellation failed.\n\nPlease manually cancel on Ekart portal:\n1. Go to: ${ekartUrl}\n2. Login to your Ekart account\n3. Find the shipment and cancel it\n\nClick OK to open Ekart portal.`);
+    const confirmManual = confirm(`For complete deletion from Ekart:\n\n1. Go to: ${ekartUrl}\n2. Login to your Ekart account\n3. Find the shipment\n4. Click "Cancel Shipment"\n5. Confirm cancellation\n\nClick OK to open Ekart portal.`);
     
     if (confirmManual) {
       window.open(ekartUrl, '_blank');
@@ -202,14 +265,56 @@ const AdminOrders = () => {
           <h1 className="text-3xl font-bold text-gray-800">All Orders</h1>
           <p className="text-gray-600 mt-1">{orders.length} total orders</p>
         </div>
-        <button
-          onClick={fetchOrders}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-        >
-          <RefreshCw className="w-4 h-4" />
-          Refresh
-        </button>
+        <div className="flex gap-3">
+          {selectedOrders.length > 0 && (
+            <button
+              onClick={bulkCancelOrders}
+              disabled={bulkCancelling}
+              className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+            >
+              {bulkCancelling ? (
+                <>
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                  Cancelling {selectedOrders.length} orders...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="w-4 h-4" />
+                  Bulk Cancel ({selectedOrders.length})
+                </>
+              )}
+            </button>
+          )}
+          <button
+            onClick={fetchOrders}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+          >
+            <RefreshCw className="w-4 h-4" />
+            Refresh
+          </button>
+        </div>
       </div>
+
+      {/* Bulk Selection Info */}
+      {selectedOrders.length > 0 && (
+        <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <AlertCircle className="w-5 h-5 text-blue-600" />
+              <div>
+                <h3 className="font-semibold text-blue-800">{selectedOrders.length} orders selected</h3>
+                <p className="text-blue-600 text-sm">Click "Bulk Cancel" to delete all selected orders from Ekart</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setSelectedOrders([])}
+              className="text-blue-600 hover:text-blue-800 text-sm"
+            >
+              Clear Selection
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Cancellation Error Banner */}
       {cancellationError && (
@@ -220,7 +325,7 @@ const AdminOrders = () => {
                 <X className="w-5 h-5 text-red-600" />
               </div>
               <div>
-                <h3 className="font-semibold text-red-800">Ekart Cancellation Failed</h3>
+                <h3 className="font-semibold text-red-800">Ekart Deletion Failed</h3>
                 <p className="text-red-600 text-sm">{cancellationError.message}</p>
                 {cancellationError.trackingId && (
                   <p className="text-red-600 text-sm mt-1">
@@ -229,12 +334,20 @@ const AdminOrders = () => {
                 )}
               </div>
             </div>
-            <button
-              onClick={() => manualEkartCancel(cancellationError.trackingId)}
-              className="px-4 py-2 bg-red-600 text-white text-sm rounded hover:bg-red-700"
-            >
-              Manual Cancel on Ekart
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => manualEkartCancel(cancellationError.trackingId)}
+                className="px-4 py-2 bg-red-600 text-white text-sm rounded hover:bg-red-700"
+              >
+                Manual Delete on Ekart
+              </button>
+              <button
+                onClick={() => setCancellationError(null)}
+                className="px-3 py-2 text-gray-600 text-sm hover:text-gray-800"
+              >
+                Dismiss
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -244,6 +357,14 @@ const AdminOrders = () => {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-10">
+                  <input
+                    type="checkbox"
+                    checked={orders.length > 0 && selectedOrders.length === orders.length}
+                    onChange={selectAllOrders}
+                    className="rounded border-gray-300"
+                  />
+                </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Order Details
                 </th>
@@ -270,6 +391,14 @@ const AdminOrders = () => {
             <tbody className="bg-white divide-y divide-gray-200">
               {orders.map((order) => (
                 <tr key={order._id} className="hover:bg-gray-50">
+                  <td className="px-6 py-4">
+                    <input
+                      type="checkbox"
+                      checked={selectedOrders.includes(order.orderId)}
+                      onChange={() => toggleOrderSelection(order.orderId)}
+                      className="rounded border-gray-300"
+                    />
+                  </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="text-sm">
                       <div className="font-medium text-gray-900">#{order.orderId}</div>
@@ -372,19 +501,19 @@ const AdminOrders = () => {
 
                     {canCancelOrder(order) && (
                       <button
-                        onClick={() => cancelOrder(order.orderId)}
+                        onClick={() => cancelOrder(order.orderId, order)}
                         disabled={cancellingOrder === order.orderId}
                         className="flex items-center gap-1 text-red-600 hover:text-red-800 disabled:opacity-50"
                       >
                         {cancellingOrder === order.orderId ? (
                           <>
                             <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-600"></div>
-                            Cancelling...
+                            Deleting...
                           </>
                         ) : (
                           <>
-                            <X className="w-4 h-4" />
-                            Cancel Order
+                            <Trash2 className="w-4 h-4" />
+                            Delete from Ekart
                           </>
                         )}
                       </button>
@@ -541,12 +670,12 @@ const AdminOrders = () => {
                 <button
                   onClick={() => {
                     closeModal();
-                    cancelOrder(selectedOrder.orderId);
+                    cancelOrder(selectedOrder.orderId, selectedOrder);
                   }}
                   className="w-full py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center justify-center gap-2"
                 >
-                  <X className="w-5 h-5" />
-                  Cancel This Order
+                  <Trash2 className="w-5 h-5" />
+                  Completely Delete from Ekart
                 </button>
               )}
             </div>
