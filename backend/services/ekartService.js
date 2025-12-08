@@ -243,7 +243,7 @@ class EkartService {
     }
   }
 
-  // ================== ✅ UPDATED CANCEL SHIPMENT ==================
+  // ================== ✅ FIXED CANCEL SHIPMENT ==================
   async cancelShipment(trackingId) {
     try {
       console.log('\n🗑️ ====== EKART: CANCEL SHIPMENT START ======');
@@ -251,7 +251,7 @@ class EkartService {
       
       const headers = await this.createHeaders();
 
-      // ✅ CORRECT: Using DELETE method with query parameter as per docs
+      // ✅ CORRECT: DELETE method with query parameter as per Ekart API docs
       const cancelURL = `${this.baseURL}/api/v1/package/cancel`;
       console.log('🌐 Cancel URL:', cancelURL);
       console.log('🔍 Query Params: tracking_id =', trackingId);
@@ -266,9 +266,8 @@ class EkartService {
       console.log('📡 Response Status:', response.status);
       console.log('📡 Response Data:', JSON.stringify(response.data, null, 2));
 
-      // ✅ Success response
+      // ✅ Success response (200-299)
       if (response.status >= 200 && response.status < 300) {
-        // ✅ Check if Ekart confirmed cancellation
         const isCancelled = response.data.status === true || 
                            response.data.status === 'true' ||
                            response.status === 200;
@@ -293,13 +292,13 @@ class EkartService {
 
       // ⚠️ 404 - Shipment not found or already cancelled
       if (response.status === 404) {
-        console.warn('⚠️ Shipment not found or already cancelled');
+        console.warn('⚠️ Shipment not found or already cancelled on Ekart');
         console.log('🗑️ ====================================\n');
         
         return {
-          success: true,
+          success: true, // Consider success since it's already cancelled/not found
           tracking_id: trackingId,
-          message: 'Shipment not found or already cancelled',
+          message: 'Shipment not found or already cancelled on Ekart',
           warning: true
         };
       }
@@ -334,9 +333,9 @@ class EkartService {
       // ⚠️ Special handling for 404
       if (error.response?.status === 404) {
         return {
-          success: true,
+          success: true, // Consider success since it's already cancelled/not found
           tracking_id: trackingId,
-          message: 'Shipment not found or already cancelled',
+          message: 'Shipment not found or already cancelled on Ekart',
           warning: true
         };
       }
