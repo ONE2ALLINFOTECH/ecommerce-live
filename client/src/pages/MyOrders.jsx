@@ -9,6 +9,7 @@ const MyOrders = () => {
   const [cancellingOrder, setCancellingOrder] = useState(null);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [viewingDetails, setViewingDetails] = useState(false);
+  const [cancellationError, setCancellationError] = useState(null);
 
   useEffect(() => {
     fetchOrders();
@@ -22,6 +23,7 @@ const MyOrders = () => {
       // Handle both array and object response
       const ordersArray = Array.isArray(data) ? data : data.orders || [];
       setOrders(ordersArray);
+      setCancellationError(null);
     } catch (error) {
       console.error('Failed to fetch orders:', error);
       alert('Failed to load orders: ' + (error.response?.data?.message || error.message));
@@ -31,15 +33,39 @@ const MyOrders = () => {
   };
 
   const cancelOrder = async (orderId) => {
-    if (!confirm('Are you sure you want to cancel this order?')) return;
+    if (!confirm('Are you sure you want to cancel this order?\n\nThis will also cancel the Ekart shipment if exists.')) return;
 
     setCancellingOrder(orderId);
+    setCancellationError(null);
+    
     try {
       const { data } = await API.put(`/orders/cancel/${orderId}`);
-      alert('Order cancelled successfully!');
-      fetchOrders(); // Refresh order list
+      
+      let message = data.message || 'Order cancelled successfully!';
+      
+      if (data.ekartCancelled) {
+        message += '\n✅ Ekart shipment cancelled successfully.';
+      } else if (data.ekartCancelError) {
+        message += `\n⚠️ Ekart cancellation: ${data.ekartCancelError}`;
+      }
+      
+      alert(message);
+      fetchOrders();
     } catch (error) {
-      alert(error.response?.data?.message || 'Failed to cancel order');
+      const errorMessage = error.response?.data?.message || 'Failed to cancel order';
+      const ekartError = error.response?.data?.ekartCancelError;
+      
+      if (ekartError) {
+        setCancellationError({
+          orderId,
+          message: `Ekart cancellation failed: ${ekartError}`,
+          trackingId: error.response?.data?.trackingId
+        });
+        
+        alert(`Order cancellation failed: ${errorMessage}\n\nPlease contact admin for manual cancellation on Ekart.`);
+      } else {
+        alert(errorMessage);
+      }
     } finally {
       setCancellingOrder(null);
     }
@@ -53,6 +79,7 @@ const MyOrders = () => {
   const closeModal = () => {
     setSelectedOrder(null);
     setViewingDetails(false);
+    setCancellationError(null);
   };
 
   const getStatusColor = (status) => {
@@ -104,6 +131,22 @@ const MyOrders = () => {
             Refresh
           </button>
         </div>
+        
+        {/* Cancellation Error Banner */}
+        {cancellationError && (
+          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+            <div className="flex items-center gap-3">
+              <div className="bg-red-100 p-2 rounded-full">
+                <X className="w-5 h-5 text-red-600" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-red-800">Order Cancellation Failed</h3>
+                <p className="text-red-600 text-sm">{cancellationError.message}</p>
+                <p className="text-red-600 text-sm mt-1">Please contact customer support for assistance.</p>
+              </div>
+            </div>
+          </div>
+        )}
         
         {orders.length === 0 ? (
           <div className="bg-white rounded-lg shadow-sm p-8 text-center">
@@ -178,12 +221,15 @@ const MyOrders = () => {
                         <p className="text-sm font-medium text-blue-900">Shipment Tracking Available</p>
                         <p className="text-xs text-blue-600 font-mono">{order.ekartTrackingId}</p>
                       </div>
-                      <Link
-                        to={`/order-tracking/${order.orderId}`}
-                        className="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
+                      <a
+                        href={`https://app.elite.ekartlogistics.in/track/${order.ekartTrackingId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center gap-1"
                       >
-                        Track Order
-                      </Link>
+                        <ExternalLink className="w-3 h-3" />
+                        Track
+                      </a>
                     </div>
                   </div>
                 )}

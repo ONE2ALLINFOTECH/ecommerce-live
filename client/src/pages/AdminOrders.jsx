@@ -11,6 +11,7 @@ const AdminOrders = () => {
   const [trackingInfo, setTrackingInfo] = useState(null);
   const [loadingTracking, setLoadingTracking] = useState(false);
   const [creatingShipment, setCreatingShipment] = useState(null);
+  const [cancellationError, setCancellationError] = useState(null);
 
   useEffect(() => {
     fetchOrders();
@@ -34,6 +35,7 @@ const AdminOrders = () => {
       
       console.log('✅ Parsed orders:', ordersArray.length, 'orders');
       setOrders(ordersArray);
+      setCancellationError(null);
     } catch (error) {
       console.error('❌ Failed to fetch orders:', error);
       console.error('Response:', error.response?.data);
@@ -57,20 +59,22 @@ const AdminOrders = () => {
     }
   };
 
-  // ✅ NEW: Admin Cancel Order Function
+  // ✅ FIXED: Admin Cancel Order Function with Ekart Cancellation
   const cancelOrder = async (orderId) => {
     if (!confirm(`Are you sure you want to cancel order ${orderId}?\n\nThis will also cancel the Ekart shipment if exists.`)) {
       return;
     }
     
     setCancellingOrder(orderId);
+    setCancellationError(null);
+    
     try {
       const { data } = await API.put(`/orders/admin/cancel/${orderId}`);
       
       let message = data.message || 'Order cancelled successfully!';
       
       if (data.ekartCancelled) {
-        message += '\n✅ Ekart shipment cancelled.';
+        message += '\n✅ Ekart shipment cancelled successfully.';
       } else if (data.ekartCancelError) {
         message += `\n⚠️ Ekart cancellation: ${data.ekartCancelError}`;
       }
@@ -78,7 +82,32 @@ const AdminOrders = () => {
       alert(message);
       fetchOrders();
     } catch (error) {
-      alert(error.response?.data?.message || 'Failed to cancel order');
+      const errorMessage = error.response?.data?.message || 'Failed to cancel order';
+      const ekartError = error.response?.data?.ekartCancelError;
+      
+      if (ekartError) {
+        setCancellationError({
+          orderId,
+          message: `Ekart cancellation failed: ${ekartError}`,
+          trackingId: error.response?.data?.trackingId
+        });
+        
+        // Ask user if they want to continue with local cancellation only
+        const shouldContinue = confirm(`Ekart cancellation failed: ${ekartError}\n\nDo you want to cancel the order locally only?`);
+        
+        if (shouldContinue) {
+          try {
+            // Update order status locally without Ekart cancellation
+            await API.put(`/orders/admin/update-status/${orderId}`, { orderStatus: 'cancelled' });
+            alert('Order cancelled locally only. Please cancel manually on Ekart portal.');
+            fetchOrders();
+          } catch (localError) {
+            alert('Failed to cancel order locally');
+          }
+        }
+      } else {
+        alert(errorMessage);
+      }
     } finally {
       setCancellingOrder(null);
     }
@@ -117,6 +146,7 @@ const AdminOrders = () => {
   const closeModal = () => {
     setSelectedOrder(null);
     setTrackingInfo(null);
+    setCancellationError(null);
   };
 
   const getStatusColor = (status) => {
@@ -140,6 +170,18 @@ const AdminOrders = () => {
 
   const canCancelOrder = (order) => {
     return !['shipped', 'delivered', 'cancelled'].includes(order.orderStatus);
+  };
+
+  // Manual Ekart cancellation
+  const manualEkartCancel = async (trackingId) => {
+    if (!trackingId) return;
+    
+    const ekartUrl = `https://app.elite.ekartlogistics.in/track/${trackingId}`;
+    const confirmManual = confirm(`Ekart cancellation failed.\n\nPlease manually cancel on Ekart portal:\n1. Go to: ${ekartUrl}\n2. Login to your Ekart account\n3. Find the shipment and cancel it\n\nClick OK to open Ekart portal.`);
+    
+    if (confirmManual) {
+      window.open(ekartUrl, '_blank');
+    }
   };
 
   if (loading) {
@@ -168,6 +210,34 @@ const AdminOrders = () => {
           Refresh
         </button>
       </div>
+
+      {/* Cancellation Error Banner */}
+      {cancellationError && (
+        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="bg-red-100 p-2 rounded-full">
+                <X className="w-5 h-5 text-red-600" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-red-800">Ekart Cancellation Failed</h3>
+                <p className="text-red-600 text-sm">{cancellationError.message}</p>
+                {cancellationError.trackingId && (
+                  <p className="text-red-600 text-sm mt-1">
+                    Tracking ID: <span className="font-mono">{cancellationError.trackingId}</span>
+                  </p>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={() => manualEkartCancel(cancellationError.trackingId)}
+              className="px-4 py-2 bg-red-600 text-white text-sm rounded hover:bg-red-700"
+            >
+              Manual Cancel on Ekart
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="bg-white rounded-lg shadow overflow-hidden">
         <div className="overflow-x-auto">
