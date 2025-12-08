@@ -268,15 +268,24 @@ class EkartService {
 
       // ✅ Success response
       if (response.status >= 200 && response.status < 300) {
+        // ✅ Check if Ekart confirmed cancellation
+        const isCancelled = response.data.status === true || 
+                           response.data.status === 'true' ||
+                           response.status === 200;
+
+        const message = response.data.remark || 
+                       response.data.message || 
+                       (isCancelled ? 'Shipment cancelled successfully on Ekart' : 'Cancellation response received');
+
         console.log('✅✅✅ SHIPMENT CANCELLED SUCCESSFULLY');
         console.log('📦 Tracking ID:', trackingId);
-        console.log('💬 Message:', response.data.remark || response.data.message);
+        console.log('💬 Message:', message);
         console.log('🗑️ ====================================\n');
 
         return {
           success: true,
           tracking_id: trackingId,
-          message: response.data.remark || response.data.message || 'Shipment cancelled successfully',
+          message: message,
           status: response.data.status,
           data: response.data
         };
