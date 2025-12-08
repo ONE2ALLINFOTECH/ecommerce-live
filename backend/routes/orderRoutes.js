@@ -462,8 +462,7 @@ router.get('/track/:orderId', protectCustomer, async (req, res) => {
     });
   }
 });
-
-// ========== ✅ UPDATED CANCEL ORDER - USER ========== 
+// ========== ✅ FIXED: CANCEL ORDER - USER ========== 
 router.put('/cancel/:orderId', protectCustomer, async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -492,6 +491,7 @@ router.put('/cancel/:orderId', protectCustomer, async (req, res) => {
     // ✅ EKART CANCELLATION - If shipment exists
     let ekartCancelled = false;
     let ekartCancelError = null;
+    let ekartCancelMessage = null;
 
     if (order.ekartTrackingId) {
       try {
@@ -500,21 +500,34 @@ router.put('/cancel/:orderId', protectCustomer, async (req, res) => {
         
         if (cancelResult.success) {
           ekartCancelled = true;
-          console.log('✅ Ekart shipment cancelled successfully');
+          ekartCancelMessage = cancelResult.message;
+          console.log('✅ Ekart shipment cancelled successfully:', ekartCancelMessage);
         } else {
-          ekartCancelError = cancelResult.message || 'Cancellation failed';
-          console.warn('⚠️ Ekart cancellation warning:', ekartCancelError);
+          ekartCancelError = cancelResult.message || 'Ekart cancellation failed';
+          console.error('❌ Ekart cancellation failed:', ekartCancelError);
+          // Don't proceed with order cancellation if Ekart cancellation failed
+          return res.status(400).json({
+            message: 'Failed to cancel shipment in Ekart',
+            error: ekartCancelError,
+            orderId: order.orderId
+          });
         }
       } catch (ekartError) {
         ekartCancelError = ekartError.message;
         console.error('❌ Ekart cancel error:', ekartError.message);
-        // Continue with order cancellation even if Ekart fails
+        // Don't proceed with order cancellation if Ekart cancellation failed
+        return res.status(500).json({
+          message: 'Failed to cancel Ekart shipment',
+          error: ekartCancelError,
+          orderId: order.orderId
+        });
       }
     } else {
       console.log('ℹ️ No Ekart shipment to cancel');
+      ekartCancelled = true; // No shipment exists, so consider it cancelled
     }
 
-    // Update order status
+    // ✅ Only update order if Ekart cancellation was successful or no shipment existed
     order.orderStatus = 'cancelled';
     order.paymentStatus = order.paymentStatus === 'success' ? 'success' : 'cancelled';
     await order.save();
@@ -528,6 +541,7 @@ router.put('/cancel/:orderId', protectCustomer, async (req, res) => {
       orderId: order.orderId,
       orderStatus: order.orderStatus,
       ekartCancelled,
+      ekartCancelMessage,
       ekartCancelError,
       order: {
         orderId: order.orderId,
@@ -544,7 +558,6 @@ router.put('/cancel/:orderId', protectCustomer, async (req, res) => {
     });
   }
 });
-
 // CHECK SERVICEABILITY
 router.get('/serviceability/:pincode', async (req, res) => {
   try {
@@ -825,8 +838,7 @@ router.post('/admin/create-shipment/:orderId', protectAdmin, async (req, res) =>
     });
   }
 });
-
-// ========== ✅ NEW: ADMIN CANCEL ORDER WITH EKART ========== 
+// ========== ✅ FIXED: ADMIN CANCEL ORDER WITH EKART ========== 
 router.put('/admin/cancel/:orderId', protectAdmin, async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -855,6 +867,7 @@ router.put('/admin/cancel/:orderId', protectAdmin, async (req, res) => {
     // ✅ EKART CANCELLATION - If shipment exists
     let ekartCancelled = false;
     let ekartCancelError = null;
+    let ekartCancelMessage = null;
 
     if (order.ekartTrackingId) {
       try {
@@ -863,21 +876,34 @@ router.put('/admin/cancel/:orderId', protectAdmin, async (req, res) => {
         
         if (cancelResult.success) {
           ekartCancelled = true;
-          console.log('✅ Ekart shipment cancelled by admin');
+          ekartCancelMessage = cancelResult.message;
+          console.log('✅ Ekart shipment cancelled by admin:', ekartCancelMessage);
         } else {
-          ekartCancelError = cancelResult.message || 'Cancellation failed';
-          console.warn('⚠️ Ekart cancellation warning:', ekartCancelError);
+          ekartCancelError = cancelResult.message || 'Ekart cancellation failed';
+          console.error('❌ Ekart cancellation failed:', ekartCancelError);
+          // Don't proceed with order cancellation if Ekart cancellation failed
+          return res.status(400).json({
+            message: 'Failed to cancel shipment in Ekart',
+            error: ekartCancelError,
+            orderId: order.orderId
+          });
         }
       } catch (ekartError) {
         ekartCancelError = ekartError.message;
         console.error('❌ Ekart cancel error:', ekartError.message);
-        // Continue with order cancellation even if Ekart fails
+        // Don't proceed with order cancellation if Ekart cancellation failed
+        return res.status(500).json({
+          message: 'Failed to cancel Ekart shipment',
+          error: ekartCancelError,
+          orderId: order.orderId
+        });
       }
     } else {
       console.log('ℹ️ No Ekart shipment to cancel');
+      ekartCancelled = true; // No shipment exists, so consider it cancelled
     }
 
-    // Update order status
+    // ✅ Only update order if Ekart cancellation was successful or no shipment existed
     order.orderStatus = 'cancelled';
     order.paymentStatus = order.paymentStatus === 'success' ? 'success' : 'cancelled';
     await order.save();
@@ -891,6 +917,7 @@ router.put('/admin/cancel/:orderId', protectAdmin, async (req, res) => {
       orderId: order.orderId,
       orderStatus: order.orderStatus,
       ekartCancelled,
+      ekartCancelMessage,
       ekartCancelError,
       order: {
         orderId: order.orderId,
