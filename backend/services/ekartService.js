@@ -1,4 +1,4 @@
-// services/ekartService.js - COMPLETE WITH MULTIPLE CANCELLATION METHODS
+// services/ekartService.js - COMPLETE FIXED VERSION WITH PROPER CANCELLATION
 const axios = require('axios');
 
 class EkartService {
@@ -243,19 +243,24 @@ class EkartService {
     }
   }
 
-  // ================== ✅ METHOD 1: STANDARD CANCELLATION ==================
+  // ================== ✅ FIXED: CANCEL SHIPMENT (PROPER IMPLEMENTATION) ==================
   async cancelShipment(trackingId) {
     try {
-      console.log('\n🗑️ ====== EKART: CANCEL SHIPMENT (METHOD 1) ======');
+      console.log('\n🗑️ ====== EKART: CANCEL SHIPMENT START ======');
       console.log('📦 Tracking ID:', trackingId);
       
       const headers = await this.createHeaders();
 
+      // ✅ CORRECT: DELETE method with query parameter as per Ekart API docs
       const cancelURL = `${this.baseURL}/api/v1/package/cancel?tracking_id=${trackingId}`;
       console.log('🌐 Cancel URL:', cancelURL);
+      console.log('🔍 Method: DELETE');
 
       const response = await axios.delete(cancelURL, {
-        headers,
+        headers: {
+          ...headers,
+          'Accept': 'application/json'
+        },
         timeout: 30000,
         validateStatus: (status) => status >= 200 && status < 500
       });
@@ -263,17 +268,15 @@ class EkartService {
       console.log('📡 Response Status:', response.status);
       console.log('📡 Response Data:', JSON.stringify(response.data, null, 2));
 
-      if (response.status === 200) {
-        const isCancelled = response.data.status === true || 
-                           response.data.status === 'true' ||
-                           (response.data.remark && response.data.remark.toLowerCase().includes('success'));
+      // ✅ Check for successful cancellation
+      if (response.status === 200 || response.status === 204) {
+        const responseData = response.data || {};
+        
+        // Ekart API returns {status: true, remark: "string", tracking_id: "string"}
+        if (responseData.status === true || responseData.success === true) {
+          const message = responseData.remark || responseData.message || 'Shipment cancelled successfully on Ekart';
 
-        if (isCancelled) {
-          const message = response.data.remark || 
-                         response.data.message || 
-                         'Shipment cancelled successfully on Ekart';
-
-          console.log('✅✅✅ SHIPMENT CANCELLED SUCCESSFULLY');
+          console.log('✅✅✅ SHIPMENT CANCELLED SUCCESSFULLY ON EKART');
           console.log('📦 Tracking ID:', trackingId);
           console.log('💬 Message:', message);
           console.log('🗑️ ====================================\n');
@@ -282,26 +285,46 @@ class EkartService {
             success: true,
             tracking_id: trackingId,
             message: message,
-            status: response.data.status,
-            data: response.data
+            status: responseData.status,
+            data: responseData,
+            cancelledOnEkart: true
           };
         }
       }
 
-      // ⚠️ 404 - Shipment not found or already cancelled
+      // ⚠️ Check if shipment is already cancelled or not found
       if (response.status === 404) {
         console.warn('⚠️ Shipment not found or already cancelled on Ekart');
         console.log('🗑️ ====================================\n');
         
         return {
-          success: true,
+          success: true, // Consider as success since it's already cancelled
           tracking_id: trackingId,
           message: 'Shipment not found or already cancelled on Ekart',
-          warning: true
+          warning: true,
+          alreadyCancelled: true
         };
       }
 
-      // ❌ Other error responses
+      // ❌ Handle 400 Bad Request
+      if (response.status === 400) {
+        const errorMsg = response.data?.message || 
+                        response.data?.description ||
+                        response.data?.remark ||
+                        'Bad Request - Invalid tracking ID';
+        
+        console.error('❌ 400 Bad Request:', errorMsg);
+        console.log('🗑️ ====================================\n');
+
+        return {
+          success: false,
+          tracking_id: trackingId,
+          message: errorMsg,
+          error: true
+        };
+      }
+
+      // ❌ Handle other error responses
       const errorMsg = response.data?.message || 
                       response.data?.remark || 
                       response.data?.description ||
@@ -318,286 +341,47 @@ class EkartService {
       };
 
     } catch (error) {
-      console.error('\n❌❌❌ SHIPMENT CANCELLATION FAILED (METHOD 1)');
+      console.error('\n❌❌❌ SHIPMENT CANCELLATION FAILED');
       console.error('Error:', error.message);
       
       if (error.response) {
         console.error('Status:', error.response.status);
         console.error('Response:', JSON.stringify(error.response.data, null, 2));
         
+        // ⚠️ Special handling for 404
         if (error.response.status === 404) {
           return {
-            success: true,
+            success: true, // Consider as success since it's already cancelled
             tracking_id: trackingId,
             message: 'Shipment not found or already cancelled on Ekart',
-            warning: true
+            warning: true,
+            alreadyCancelled: true
+          };
+        }
+        
+        // Handle 400 Bad Request
+        if (error.response.status === 400) {
+          const errorMsg = error.response.data?.message || 
+                          error.response.data?.description ||
+                          error.response.data?.remark ||
+                          'Bad Request - Invalid tracking ID';
+          
+          return {
+            success: false,
+            tracking_id: trackingId,
+            message: errorMsg,
+            error: true
           };
         }
       }
       
       console.error('🗑️ ====================================\n');
 
+      // ❌ Network or other errors
       return {
         success: false,
         tracking_id: trackingId,
         message: `Cancellation failed: ${error.message}`,
-        error: true
-      };
-    }
-  }
-
-  // ================== ✅ METHOD 2: COMPLETE CANCELLATION (MAIN METHOD) ==================
-  async completeCancelShipment(trackingId) {
-    try {
-      console.log('\n🗑️ ====== EKART: COMPLETE CANCELLATION (METHOD 2) ======');
-      console.log('📦 Tracking ID:', trackingId);
-      
-      // Try method 1 first
-      console.log('🔄 Trying Method 1...');
-      const method1Result = await this.cancelShipment(trackingId);
-      
-      if (method1Result.success) {
-        console.log('✅ Method 1 successful');
-        return method1Result;
-      }
-
-      // If method 1 fails, try method 2
-      console.log('🔄 Method 1 failed, trying Method 2...');
-      const headers = await this.createHeaders();
-
-      // Alternative approach: Try with different API endpoint or method
-      const cancelURL = `${this.baseURL}/api/v1/package/cancel`;
-      console.log('🌐 Alternative Cancel URL:', cancelURL);
-
-      const response = await axios.delete(cancelURL, {
-        params: { tracking_id: trackingId },
-        headers,
-        timeout: 30000,
-        validateStatus: (status) => status >= 200 && status < 500
-      });
-
-      console.log('📡 Response Status:', response.status);
-      console.log('📡 Response Data:', JSON.stringify(response.data, null, 2));
-
-      if (response.status === 200) {
-        const isCancelled = response.data.status === true || 
-                           response.data.status === 'true' ||
-                           (response.data.remark && (
-                             response.data.remark.toLowerCase().includes('success') ||
-                             response.data.remark.toLowerCase().includes('cancel')
-                           ));
-
-        if (isCancelled) {
-          const message = response.data.remark || 
-                         response.data.message || 
-                         'Shipment completely cancelled on Ekart';
-
-          console.log('✅✅✅ COMPLETE CANCELLATION SUCCESSFUL');
-          console.log('📦 Tracking ID:', trackingId);
-          console.log('💬 Message:', message);
-          console.log('🗑️ ====================================\n');
-
-          return {
-            success: true,
-            tracking_id: trackingId,
-            message: message,
-            status: response.data.status,
-            data: response.data,
-            method: 'alternative'
-          };
-        }
-      }
-
-      // Check if already cancelled
-      if (response.status === 404 || 
-          (response.data && response.data.message && 
-           response.data.message.toLowerCase().includes('not found'))) {
-        console.warn('⚠️ Shipment not found or already cancelled');
-        console.log('🗑️ ====================================\n');
-        
-        return {
-          success: true,
-          tracking_id: trackingId,
-          message: 'Shipment already cancelled or not found on Ekart',
-          warning: true,
-          method: 'alternative'
-        };
-      }
-
-      const errorMsg = response.data?.message || 
-                      response.data?.remark || 
-                      response.data?.description ||
-                      `Alternative cancellation failed: ${response.status}`;
-      
-      console.error('❌ Alternative Cancellation Error:', errorMsg);
-      console.log('🗑️ ====================================\n');
-
-      return {
-        success: false,
-        tracking_id: trackingId,
-        message: errorMsg,
-        error: true,
-        method: 'alternative'
-      };
-
-    } catch (error) {
-      console.error('\n❌❌❌ COMPLETE CANCELLATION FAILED');
-      console.error('Error:', error.message);
-      
-      if (error.response) {
-        console.error('Status:', error.response.status);
-        console.error('Response:', JSON.stringify(error.response.data, null, 2));
-        
-        // Check for 404 or already cancelled
-        if (error.response.status === 404 || 
-            (error.response.data && error.response.data.message && 
-             error.response.data.message.toLowerCase().includes('not found'))) {
-          return {
-            success: true,
-            tracking_id: trackingId,
-            message: 'Shipment not found or already cancelled on Ekart',
-            warning: true,
-            method: 'error-handling'
-          };
-        }
-      }
-      
-      console.error('🗑️ ====================================\n');
-
-      return {
-        success: false,
-        tracking_id: trackingId,
-        message: `Complete cancellation failed: ${error.message}`,
-        error: true,
-        method: 'error-handling'
-      };
-    }
-  }
-
-  // ================== ✅ METHOD 3: ALTERNATIVE CANCELLATION (BACKUP) ==================
-  async alternativeCancelShipment(trackingId) {
-    try {
-      console.log('\n🗑️ ====== EKART: ALTERNATIVE CANCELLATION (METHOD 3) ======');
-      console.log('📦 Tracking ID:', trackingId);
-      
-      const headers = await this.createHeaders();
-
-      // Try PUT method instead of DELETE (some APIs accept PUT for cancellation)
-      const cancelURL = `${this.baseURL}/api/v1/package/cancel`;
-      console.log('🌐 Alternative Cancel URL (PUT):', cancelURL);
-
-      const response = await axios.put(cancelURL, 
-        { tracking_id: trackingId },
-        {
-          headers,
-          timeout: 30000,
-          validateStatus: (status) => status >= 200 && status < 500
-        }
-      );
-
-      console.log('📡 Response Status:', response.status);
-      console.log('📡 Response Data:', JSON.stringify(response.data, null, 2));
-
-      if (response.status === 200) {
-        const isCancelled = response.data.status === true || 
-                           response.data.status === 'true' ||
-                           (response.data.remark && response.data.remark.toLowerCase().includes('success'));
-
-        if (isCancelled) {
-          console.log('✅✅✅ ALTERNATIVE CANCELLATION SUCCESSFUL');
-          console.log('📦 Tracking ID:', trackingId);
-          console.log('💬 Message:', response.data.remark || 'Cancelled');
-          console.log('🗑️ ====================================\n');
-
-          return {
-            success: true,
-            tracking_id: trackingId,
-            message: 'Shipment cancelled via alternative method',
-            status: response.data.status,
-            data: response.data,
-            method: 'put-method'
-          };
-        }
-      }
-
-      // Try POST method
-      console.log('🔄 PUT method failed, trying POST...');
-      const postResponse = await axios.post(cancelURL,
-        { tracking_id: trackingId },
-        {
-          headers,
-          timeout: 30000,
-          validateStatus: (status) => status >= 200 && status < 500
-        }
-      );
-
-      console.log('📡 POST Response Status:', postResponse.status);
-      console.log('📡 POST Response Data:', JSON.stringify(postResponse.data, null, 2));
-
-      if (postResponse.status === 200) {
-        const isCancelled = postResponse.data.status === true || 
-                           postResponse.data.status === 'true' ||
-                           (postResponse.data.remark && postResponse.data.remark.toLowerCase().includes('success'));
-
-        if (isCancelled) {
-          console.log('✅✅✅ POST METHOD CANCELLATION SUCCESSFUL');
-          console.log('📦 Tracking ID:', trackingId);
-          console.log('💬 Message:', postResponse.data.remark || 'Cancelled');
-          console.log('🗑️ ====================================\n');
-
-          return {
-            success: true,
-            tracking_id: trackingId,
-            message: 'Shipment cancelled via POST method',
-            status: postResponse.data.status,
-            data: postResponse.data,
-            method: 'post-method'
-          };
-        }
-      }
-
-      console.warn('⚠️ All alternative methods failed');
-      console.log('🗑️ ====================================\n');
-
-      return {
-        success: false,
-        tracking_id: trackingId,
-        message: 'All alternative cancellation methods failed',
-        error: true
-      };
-
-    } catch (error) {
-      console.error('\n❌❌❌ ALTERNATIVE CANCELLATION FAILED');
-      console.error('Error:', error.message);
-      
-      // Even if all methods fail, check if shipment exists
-      try {
-        const trackingInfo = await this.trackShipment(trackingId);
-        if (trackingInfo.error || trackingInfo.current_status === 'Tracking unavailable') {
-          // Shipment doesn't exist or can't be tracked (already deleted)
-          return {
-            success: true,
-            tracking_id: trackingId,
-            message: 'Shipment appears to be already deleted or not found',
-            warning: true
-          };
-        }
-      } catch (trackError) {
-        // Can't track - likely already deleted
-        return {
-          success: true,
-          tracking_id: trackingId,
-          message: 'Shipment cannot be tracked (likely already deleted)',
-          warning: true
-        };
-      }
-      
-      console.error('🗑️ ====================================\n');
-
-      return {
-        success: false,
-        tracking_id: trackingId,
-        message: `Alternative cancellation failed: ${error.message}`,
         error: true
       };
     }

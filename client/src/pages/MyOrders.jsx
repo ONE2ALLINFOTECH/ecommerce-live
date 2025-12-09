@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Package, Truck, X, Eye, ExternalLink, RefreshCw, AlertCircle } from 'lucide-react';
+import { Package, Truck, X, Eye, ExternalLink, RefreshCw } from 'lucide-react';
 import API from '../services/api';
 
 const MyOrders = () => {
@@ -10,6 +10,7 @@ const MyOrders = () => {
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [viewingDetails, setViewingDetails] = useState(false);
   const [cancellationError, setCancellationError] = useState(null);
+  const [cancellationSuccess, setCancellationSuccess] = useState(null);
 
   useEffect(() => {
     fetchOrders();
@@ -24,6 +25,7 @@ const MyOrders = () => {
       const ordersArray = Array.isArray(data) ? data : data.orders || [];
       setOrders(ordersArray);
       setCancellationError(null);
+      setCancellationSuccess(null);
     } catch (error) {
       console.error('Failed to fetch orders:', error);
       alert('Failed to load orders: ' + (error.response?.data?.message || error.message));
@@ -33,10 +35,11 @@ const MyOrders = () => {
   };
 
   const cancelOrder = async (orderId) => {
-    if (!confirm('Are you sure you want to cancel this order?\n\nThis will completely delete the shipment from Ekart.')) return;
+    if (!confirm('Are you sure you want to cancel this order?\n\nThis will also cancel the Ekart shipment if exists.')) return;
 
     setCancellingOrder(orderId);
     setCancellationError(null);
+    setCancellationSuccess(null);
     
     try {
       const { data } = await API.put(`/orders/cancel/${orderId}`);
@@ -44,29 +47,22 @@ const MyOrders = () => {
       let message = data.message || 'Order cancelled successfully!';
       
       if (data.ekartCancelled) {
-        message += '\n✅✅✅ Ekart shipment completely deleted.';
+        message += '\n✅ Ekart shipment cancelled successfully.';
+        setCancellationSuccess(`Order ${orderId} cancelled successfully on Ekart`);
       } else if (data.ekartCancelError) {
-        message += `\n⚠️ Note: ${data.ekartCancelError}`;
+        message += `\n⚠️ Ekart cancellation: ${data.ekartCancelError}`;
+        setCancellationError({
+          orderId,
+          message: `Ekart cancellation failed: ${data.ekartCancelError}`,
+          trackingId: data.ekartResponse?.tracking_id
+        });
       }
       
       alert(message);
       fetchOrders();
     } catch (error) {
       const errorMessage = error.response?.data?.message || 'Failed to cancel order';
-      const ekartError = error.response?.data?.ekartCancelError;
-      const trackingId = error.response?.data?.trackingId;
-      
-      if (ekartError) {
-        setCancellationError({
-          orderId,
-          message: `Ekart deletion failed: ${ekartError}`,
-          trackingId
-        });
-        
-        alert(`Order cancellation failed: ${errorMessage}\n\nPlease contact support for manual deletion from Ekart.`);
-      } else {
-        alert(errorMessage);
-      }
+      alert(errorMessage);
     } finally {
       setCancellingOrder(null);
     }
@@ -81,6 +77,7 @@ const MyOrders = () => {
     setSelectedOrder(null);
     setViewingDetails(false);
     setCancellationError(null);
+    setCancellationSuccess(null);
   };
 
   const getStatusColor = (status) => {
@@ -133,15 +130,30 @@ const MyOrders = () => {
           </button>
         </div>
         
+        {/* Cancellation Success Banner */}
+        {cancellationSuccess && (
+          <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+            <div className="flex items-center gap-3">
+              <div className="bg-green-100 p-2 rounded-full">
+                <Package className="w-5 h-5 text-green-600" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-green-800">Order Cancelled Successfully</h3>
+                <p className="text-green-600 text-sm">{cancellationSuccess}</p>
+              </div>
+            </div>
+          </div>
+        )}
+        
         {/* Cancellation Error Banner */}
         {cancellationError && (
           <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
             <div className="flex items-center gap-3">
               <div className="bg-red-100 p-2 rounded-full">
-                <AlertCircle className="w-5 h-5 text-red-600" />
+                <X className="w-5 h-5 text-red-600" />
               </div>
               <div>
-                <h3 className="font-semibold text-red-800">Order Deletion Failed</h3>
+                <h3 className="font-semibold text-red-800">Order Cancellation Failed</h3>
                 <p className="text-red-600 text-sm">{cancellationError.message}</p>
                 <p className="text-red-600 text-sm mt-1">Please contact customer support for assistance.</p>
               </div>
@@ -259,7 +271,7 @@ const MyOrders = () => {
                           {cancellingOrder === order.orderId ? (
                             <>
                               <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-600" />
-                              Deleting...
+                              Cancelling...
                             </>
                           ) : (
                             <>
