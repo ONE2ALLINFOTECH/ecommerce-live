@@ -1,4 +1,4 @@
-// services/ekartService.js - COMPLETE FIXED VERSION WITH PROPER CANCELLATION
+// services/ekartService.js - COMPLETE FIXED VERSION WITH COMPLETE EKART DELETION
 const axios = require('axios');
 
 class EkartService {
@@ -243,15 +243,16 @@ class EkartService {
     }
   }
 
-  // ================== ✅ FIXED: CANCEL SHIPMENT (PROPER IMPLEMENTATION) ==================
+  // ================== ✅ FIXED: CANCEL SHIPMENT (COMPLETE DELETION FROM EKART) ==================
   async cancelShipment(trackingId) {
     try {
       console.log('\n🗑️ ====== EKART: CANCEL SHIPMENT START ======');
       console.log('📦 Tracking ID:', trackingId);
+      console.log('🔍 Goal: COMPLETE DELETION FROM EKART - कोई निशान नहीं बचना चाहिए');
       
       const headers = await this.createHeaders();
 
-      // ✅ CORRECT: DELETE method with query parameter as per Ekart API docs
+      // ✅ CORRECT: DELETE method with query parameter
       const cancelURL = `${this.baseURL}/api/v1/package/cancel?tracking_id=${trackingId}`;
       console.log('🌐 Cancel URL:', cancelURL);
       console.log('🔍 Method: DELETE');
@@ -268,17 +269,18 @@ class EkartService {
       console.log('📡 Response Status:', response.status);
       console.log('📡 Response Data:', JSON.stringify(response.data, null, 2));
 
-      // ✅ Check for successful cancellation
-      if (response.status === 200 || response.status === 204) {
+      // ✅ Handle 200 OK with success response
+      if (response.status === 200) {
         const responseData = response.data || {};
         
         // Ekart API returns {status: true, remark: "string", tracking_id: "string"}
         if (responseData.status === true || responseData.success === true) {
-          const message = responseData.remark || responseData.message || 'Shipment cancelled successfully on Ekart';
+          const message = responseData.remark || responseData.message || 'Shipment COMPLETELY DELETED from Ekart';
 
-          console.log('✅✅✅ SHIPMENT CANCELLED SUCCESSFULLY ON EKART');
+          console.log('✅✅✅ SHIPMENT COMPLETELY DELETED FROM EKART');
           console.log('📦 Tracking ID:', trackingId);
           console.log('💬 Message:', message);
+          console.log('🚫 EKart पर अब कुछ नहीं दिखेगा - सब DELETE हो गया');
           console.log('🗑️ ====================================\n');
 
           return {
@@ -287,22 +289,57 @@ class EkartService {
             message: message,
             status: responseData.status,
             data: responseData,
-            cancelledOnEkart: true
+            completelyDeleted: true,
+            deletedFromEkart: true
+          };
+        } else if (responseData.status === false) {
+          // If status is false but we got 200, it means Ekart didn't cancel properly
+          const errorMsg = responseData.remark || responseData.message || 'Ekart cancellation returned false status';
+          
+          console.error('❌ Ekart cancellation returned false status:', errorMsg);
+          console.log('🗑️ ====================================\n');
+
+          return {
+            success: false,
+            tracking_id: trackingId,
+            message: errorMsg,
+            error: true,
+            ekartResponse: responseData
           };
         }
       }
 
-      // ⚠️ Check if shipment is already cancelled or not found
-      if (response.status === 404) {
-        console.warn('⚠️ Shipment not found or already cancelled on Ekart');
+      // ⚠️ 204 No Content - Successful deletion (some APIs return 204)
+      if (response.status === 204) {
+        console.log('✅✅✅ SHIPMENT COMPLETELY DELETED FROM EKART (204 No Content)');
+        console.log('📦 Tracking ID:', trackingId);
+        console.log('🚫 EKart पर अब कुछ नहीं दिखेगा');
         console.log('🗑️ ====================================\n');
         
         return {
-          success: true, // Consider as success since it's already cancelled
+          success: true,
           tracking_id: trackingId,
-          message: 'Shipment not found or already cancelled on Ekart',
+          message: 'Shipment completely deleted from Ekart (204 No Content)',
+          completelyDeleted: true,
+          deletedFromEkart: true,
+          statusCode: 204
+        };
+      }
+
+      // ⚠️ 404 - Shipment not found (already deleted or never existed)
+      if (response.status === 404) {
+        console.warn('⚠️ Shipment not found on Ekart - Already deleted or never existed');
+        console.log('📦 Tracking ID:', trackingId);
+        console.log('🚫 EKart पर पहले से ही नहीं है');
+        console.log('🗑️ ====================================\n');
+        
+        return {
+          success: true, // Consider success since it's already deleted
+          tracking_id: trackingId,
+          message: 'Shipment not found on Ekart - Already deleted or never existed',
           warning: true,
-          alreadyCancelled: true
+          alreadyDeleted: true,
+          completelyDeleted: true
         };
       }
 
@@ -311,7 +348,7 @@ class EkartService {
         const errorMsg = response.data?.message || 
                         response.data?.description ||
                         response.data?.remark ||
-                        'Bad Request - Invalid tracking ID';
+                        'Bad Request - Invalid tracking ID or cannot be cancelled';
         
         console.error('❌ 400 Bad Request:', errorMsg);
         console.log('🗑️ ====================================\n');
@@ -320,7 +357,26 @@ class EkartService {
           success: false,
           tracking_id: trackingId,
           message: errorMsg,
-          error: true
+          error: true,
+          statusCode: 400
+        };
+      }
+
+      // ❌ Handle 500 Internal Server Error
+      if (response.status === 500) {
+        const errorMsg = response.data?.message || 
+                        response.data?.description ||
+                        'Ekart server error - Try again later';
+        
+        console.error('❌ 500 Ekart Server Error:', errorMsg);
+        console.log('🗑️ ====================================\n');
+
+        return {
+          success: false,
+          tracking_id: trackingId,
+          message: errorMsg,
+          error: true,
+          statusCode: 500
         };
       }
 
@@ -337,7 +393,8 @@ class EkartService {
         success: false,
         tracking_id: trackingId,
         message: errorMsg,
-        error: true
+        error: true,
+        statusCode: response.status
       };
 
     } catch (error) {
@@ -350,12 +407,15 @@ class EkartService {
         
         // ⚠️ Special handling for 404
         if (error.response.status === 404) {
+          console.warn('⚠️ Shipment not found on Ekart - Already deleted');
+          
           return {
-            success: true, // Consider as success since it's already cancelled
+            success: true, // Consider success since it's already deleted
             tracking_id: trackingId,
-            message: 'Shipment not found or already cancelled on Ekart',
+            message: 'Shipment not found on Ekart - Already deleted',
             warning: true,
-            alreadyCancelled: true
+            alreadyDeleted: true,
+            completelyDeleted: true
           };
         }
         
@@ -370,7 +430,23 @@ class EkartService {
             success: false,
             tracking_id: trackingId,
             message: errorMsg,
-            error: true
+            error: true,
+            statusCode: 400
+          };
+        }
+        
+        // Handle 500 Internal Server Error
+        if (error.response.status === 500) {
+          const errorMsg = error.response.data?.message || 
+                          error.response.data?.description ||
+                          'Ekart server error';
+          
+          return {
+            success: false,
+            tracking_id: trackingId,
+            message: errorMsg,
+            error: true,
+            statusCode: 500
           };
         }
       }
@@ -382,7 +458,8 @@ class EkartService {
         success: false,
         tracking_id: trackingId,
         message: `Cancellation failed: ${error.message}`,
-        error: true
+        error: true,
+        networkError: true
       };
     }
   }

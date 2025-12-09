@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Package, Truck, X, Eye, ExternalLink, RefreshCw } from 'lucide-react';
+import { Package, Truck, X, Eye, ExternalLink, RefreshCw, CheckCircle } from 'lucide-react';
 import API from '../services/api';
 
 const MyOrders = () => {
@@ -35,7 +35,7 @@ const MyOrders = () => {
   };
 
   const cancelOrder = async (orderId) => {
-    if (!confirm('Are you sure you want to cancel this order?\n\nThis will also cancel the Ekart shipment if exists.')) return;
+    if (!confirm('Are you sure you want to cancel this order?\n\nThis will COMPLETELY DELETE the order from Ekart.\nEkart पर से सब कुछ DELETE हो जाएगा।')) return;
 
     setCancellingOrder(orderId);
     setCancellationError(null);
@@ -45,16 +45,31 @@ const MyOrders = () => {
       const { data } = await API.put(`/orders/cancel/${orderId}`);
       
       let message = data.message || 'Order cancelled successfully!';
+      let successDetails = [];
       
       if (data.ekartCancelled) {
-        message += '\n✅ Ekart shipment cancelled successfully.';
-        setCancellationSuccess(`Order ${orderId} cancelled successfully on Ekart`);
+        message += '\n✅ Ekart shipment CANCELLED and COMPLETELY DELETED.';
+        successDetails.push('✅ Ekart shipment cancelled');
+        
+        if (data.ekartDeleted) {
+          successDetails.push('✅ COMPLETELY DELETED from Ekart');
+          successDetails.push('✅ Ekart पर अब कुछ नहीं दिखेगा');
+        }
       } else if (data.ekartCancelError) {
         message += `\n⚠️ Ekart cancellation: ${data.ekartCancelError}`;
         setCancellationError({
           orderId,
-          message: `Ekart cancellation failed: ${data.ekartCancelError}`,
+          message: `Ekart deletion failed: ${data.ekartCancelError}`,
           trackingId: data.ekartResponse?.tracking_id
+        });
+      }
+      
+      if (successDetails.length > 0) {
+        setCancellationSuccess({
+          orderId,
+          message: `Order ${orderId} CANCELLED SUCCESSFULLY`,
+          details: successDetails,
+          ekartDeleted: data.ekartDeleted || false
         });
       }
       
@@ -62,7 +77,19 @@ const MyOrders = () => {
       fetchOrders();
     } catch (error) {
       const errorMessage = error.response?.data?.message || 'Failed to cancel order';
-      alert(errorMessage);
+      const ekartError = error.response?.data?.ekartCancelError;
+      
+      if (ekartError) {
+        setCancellationError({
+          orderId,
+          message: `Ekart deletion failed: ${ekartError}`,
+          trackingId: error.response?.data?.trackingId
+        });
+        
+        alert(`Order cancellation failed: ${errorMessage}\n\nPlease contact admin for manual deletion on Ekart.`);
+      } else {
+        alert(errorMessage);
+      }
     } finally {
       setCancellingOrder(null);
     }
@@ -135,11 +162,25 @@ const MyOrders = () => {
           <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
             <div className="flex items-center gap-3">
               <div className="bg-green-100 p-2 rounded-full">
-                <Package className="w-5 h-5 text-green-600" />
+                <CheckCircle className="w-5 h-5 text-green-600" />
               </div>
-              <div>
-                <h3 className="font-semibold text-green-800">Order Cancelled Successfully</h3>
-                <p className="text-green-600 text-sm">{cancellationSuccess}</p>
+              <div className="flex-1">
+                <h3 className="font-semibold text-green-800">{cancellationSuccess.message}</h3>
+                {cancellationSuccess.details && (
+                  <ul className="mt-2 space-y-1">
+                    {cancellationSuccess.details.map((detail, idx) => (
+                      <li key={idx} className="text-green-700 text-sm flex items-center gap-2">
+                        <CheckCircle className="w-3 h-3" />
+                        {detail}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {cancellationSuccess.ekartDeleted && (
+                  <p className="mt-2 text-green-600 text-sm font-medium">
+                    ✅ Ekart पर अब कुछ नहीं दिखेगा - COMPLETELY DELETED
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -197,6 +238,12 @@ const MyOrders = () => {
                         <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${getPaymentStatusColor(order.paymentStatus)}`}>
                           Payment: {order.paymentStatus}
                         </span>
+                        {order.ekartDeleted && (
+                          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                            <X className="w-3 h-3 mr-1" />
+                            DELETED FROM EKART
+                          </span>
+                        )}
                       </div>
                     </div>
                     <div className="mt-4 sm:mt-0 text-right">
@@ -225,8 +272,8 @@ const MyOrders = () => {
                   ))}
                 </div>
 
-                {/* Tracking Info */}
-                {order.ekartTrackingId && (
+                {/* Tracking Info - Show only if not deleted from Ekart */}
+                {order.ekartTrackingId && !order.ekartDeleted && (
                   <div className="px-6 pb-4">
                     <div className="flex items-center gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                       <Truck className="w-5 h-5 text-blue-600" />
@@ -243,6 +290,19 @@ const MyOrders = () => {
                         <ExternalLink className="w-3 h-3" />
                         Track
                       </a>
+                    </div>
+                  </div>
+                )}
+                
+                {/* Ekart Deletion Status */}
+                {order.ekartDeleted && (
+                  <div className="px-6 pb-4">
+                    <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg">
+                      <X className="w-5 h-5 text-red-600" />
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-red-900">DELETED FROM EKART</p>
+                        <p className="text-xs text-red-600">Completely removed from Ekart</p>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -312,8 +372,40 @@ const MyOrders = () => {
                   <span className={`px-3 py-1 rounded-full text-sm ${getPaymentStatusColor(selectedOrder.paymentStatus)}`}>
                     Payment: {selectedOrder.paymentStatus}
                   </span>
+                  {selectedOrder.ekartDeleted && (
+                    <span className="px-3 py-1 rounded-full text-sm bg-red-100 text-red-800">
+                      DELETED FROM EKART
+                    </span>
+                  )}
                 </div>
               </div>
+
+              {/* Ekart Deletion Status */}
+              {selectedOrder.ekartDeleted && (
+                <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <X className="w-5 h-5 text-red-600" />
+                    <h3 className="font-semibold text-red-800">Ekart Deletion Status</h3>
+                  </div>
+                  <p className="text-sm text-red-700 mt-2">
+                    This order has been completely deleted from Ekart. No tracking information or order details exist on Ekart anymore.
+                  </p>
+                  <ul className="mt-2 space-y-1 text-sm text-red-600">
+                    <li className="flex items-center gap-2">
+                      <CheckCircle className="w-4 h-4 text-green-600" />
+                      ✅ Ekart पर अब कुछ नहीं दिखेगा
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <CheckCircle className="w-4 h-4 text-green-600" />
+                      ✅ सभी डेटा DELETE हो गया
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <CheckCircle className="w-4 h-4 text-green-600" />
+                      ✅ कोई निशान नहीं बचा
+                    </li>
+                  </ul>
+                </div>
+              )}
 
               {/* Delivery Address */}
               <div>
@@ -378,7 +470,7 @@ const MyOrders = () => {
                   className="w-full py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center justify-center gap-2"
                 >
                   <X className="w-5 h-5" />
-                  Cancel This Order
+                  Cancel This Order (COMPLETE EKART DELETION)
                 </button>
               )}
             </div>

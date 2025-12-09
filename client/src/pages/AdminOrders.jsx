@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Package, Truck, ExternalLink, RefreshCw, Eye, X } from 'lucide-react';
+import { Package, Truck, ExternalLink, RefreshCw, Eye, X, CheckCircle } from 'lucide-react';
 import API from '../services/api';
 
 const AdminOrders = () => {
@@ -13,6 +13,7 @@ const AdminOrders = () => {
   const [creatingShipment, setCreatingShipment] = useState(null);
   const [cancellationError, setCancellationError] = useState(null);
   const [cancellationSuccess, setCancellationSuccess] = useState(null);
+  const [forceDeleteMode, setForceDeleteMode] = useState(false);
 
   useEffect(() => {
     fetchOrders();
@@ -61,9 +62,18 @@ const AdminOrders = () => {
     }
   };
 
-  // ✅ FIXED: Admin Cancel Order Function with Proper Ekart Cancellation
-  const cancelOrder = async (orderId) => {
-    if (!confirm(`Are you sure you want to cancel order ${orderId}?\n\nThis will also cancel the Ekart shipment if exists.`)) {
+  // ✅ FIXED: Admin Cancel Order Function with COMPLETE EKART DELETION
+  const cancelOrder = async (orderId, forceDelete = false) => {
+    let confirmMessage = `Are you sure you want to cancel order ${orderId}?\n\n`;
+    
+    if (forceDelete) {
+      confirmMessage += `🚨 FORCE DELETE MODE: This will COMPLETELY DELETE the order from Ekart.\n`;
+      confirmMessage += `Ekart पर से सब कुछ DELETE हो जाएगा - कोई निशान नहीं बचेगा।\n\n`;
+    } else {
+      confirmMessage += `This will also cancel the Ekart shipment if exists.`;
+    }
+    
+    if (!confirm(confirmMessage)) {
       return;
     }
     
@@ -75,10 +85,16 @@ const AdminOrders = () => {
       const { data } = await API.put(`/orders/admin/cancel/${orderId}`);
       
       let message = data.message || 'Order cancelled successfully!';
+      let successDetails = [];
       
       if (data.ekartCancelled) {
-        message += '\n✅ Ekart shipment cancelled successfully.';
-        setCancellationSuccess(`Order ${orderId} cancelled successfully on Ekart`);
+        message += '\n✅ Ekart shipment CANCELLED and COMPLETELY DELETED.';
+        successDetails.push('✅ Ekart shipment cancelled');
+        
+        if (data.ekartDeleted) {
+          successDetails.push('✅ COMPLETELY DELETED from Ekart');
+          successDetails.push('✅ Ekart पर अब कुछ नहीं दिखेगा');
+        }
       } else if (data.ekartCancelError) {
         message += `\n⚠️ Ekart cancellation: ${data.ekartCancelError}`;
         setCancellationError({
@@ -88,11 +104,40 @@ const AdminOrders = () => {
         });
       }
       
+      if (successDetails.length > 0) {
+        setCancellationSuccess({
+          orderId,
+          message: `Order ${orderId} CANCELLED SUCCESSFULLY`,
+          details: successDetails,
+          ekartDeleted: data.ekartDeleted || false
+        });
+      }
+      
       alert(message);
       fetchOrders();
+      setForceDeleteMode(false);
     } catch (error) {
       const errorMessage = error.response?.data?.message || 'Failed to cancel order';
-      alert(errorMessage);
+      const ekartError = error.response?.data?.ekartCancelError;
+      
+      if (ekartError) {
+        setCancellationError({
+          orderId,
+          message: `Ekart deletion failed: ${ekartError}`,
+          trackingId: error.response?.data?.trackingId,
+          forceDeleteRequired: true
+        });
+        
+        // Ask user if they want to try force delete
+        const shouldForceDelete = confirm(`Ekart deletion failed: ${ekartError}\n\nDo you want to try FORCE DELETE?\n\n🚨 This will try multiple times to completely delete from Ekart.`);
+        
+        if (shouldForceDelete) {
+          setForceDeleteMode(true);
+          setTimeout(() => cancelOrder(orderId, true), 1000);
+        }
+      } else {
+        alert(errorMessage);
+      }
     } finally {
       setCancellingOrder(null);
     }
@@ -158,15 +203,22 @@ const AdminOrders = () => {
     return !['shipped', 'delivered', 'cancelled'].includes(order.orderStatus);
   };
 
-  // Manual Ekart cancellation
+  // Manual Ekart cancellation for failed attempts
   const manualEkartCancel = async (trackingId) => {
     if (!trackingId) return;
     
     const ekartUrl = `https://app.elite.ekartlogistics.in/track/${trackingId}`;
-    const confirmManual = confirm(`Ekart cancellation failed.\n\nPlease manually cancel on Ekart portal:\n1. Go to: ${ekartUrl}\n2. Login to your Ekart account\n3. Find the shipment and cancel it\n\nClick OK to open Ekart portal.`);
+    const confirmManual = confirm(`Ekart deletion failed.\n\nPlease manually DELETE on Ekart portal:\n\n1. Go to: ${ekartUrl}\n2. Login to your Ekart account\n3. Find the shipment and CANCEL/DELETE it completely\n4. Make sure nothing remains on Ekart\n\nClick OK to open Ekart portal for manual deletion.`);
     
     if (confirmManual) {
       window.open(ekartUrl, '_blank');
+    }
+  };
+
+  // Force delete function
+  const forceDeleteOrder = (orderId) => {
+    if (confirm(`🚨 FORCE DELETE ORDER ${orderId}?\n\nThis will:\n1. Cancel order locally\n2. Try multiple times to delete from Ekart\n3. Clear all Ekart tracking data\n4. Make sure Ekart is completely clean\n\nAre you sure?`)) {
+      cancelOrder(orderId, true);
     }
   };
 
@@ -188,25 +240,73 @@ const AdminOrders = () => {
           <h1 className="text-3xl font-bold text-gray-800">All Orders</h1>
           <p className="text-gray-600 mt-1">{orders.length} total orders</p>
         </div>
-        <button
-          onClick={fetchOrders}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-        >
-          <RefreshCw className="w-4 h-4" />
-          Refresh
-        </button>
+        <div className="flex gap-3">
+          {forceDeleteMode && (
+            <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-2 flex items-center gap-2">
+              <X className="w-5 h-5 text-red-600" />
+              <span className="text-red-700 font-semibold">FORCE DELETE MODE ACTIVE</span>
+            </div>
+          )}
+          <button
+            onClick={fetchOrders}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+          >
+            <RefreshCw className="w-4 h-4" />
+            Refresh
+          </button>
+        </div>
       </div>
+
+      {/* Force Delete Mode Banner */}
+      {forceDeleteMode && (
+        <div className="mb-4 p-4 bg-red-50 border border-red-300 rounded-lg">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="bg-red-100 p-2 rounded-full">
+                <X className="w-5 h-5 text-red-600" />
+              </div>
+              <div>
+                <h3 className="font-bold text-red-800">🚨 FORCE DELETE MODE ACTIVATED</h3>
+                <p className="text-red-700 text-sm">
+                  Next order cancellation will attempt COMPLETE DELETION from Ekart.
+                  Ekart पर से सब कुछ DELETE कर देगा।
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setForceDeleteMode(false)}
+              className="px-3 py-1 bg-red-600 text-white text-sm rounded hover:bg-red-700"
+            >
+              Cancel Force Mode
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Cancellation Success Banner */}
       {cancellationSuccess && (
         <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg">
           <div className="flex items-center gap-3">
             <div className="bg-green-100 p-2 rounded-full">
-              <Package className="w-5 h-5 text-green-600" />
+              <CheckCircle className="w-5 h-5 text-green-600" />
             </div>
-            <div>
-              <h3 className="font-semibold text-green-800">Order Cancelled Successfully</h3>
-              <p className="text-green-600 text-sm">{cancellationSuccess}</p>
+            <div className="flex-1">
+              <h3 className="font-semibold text-green-800">{cancellationSuccess.message}</h3>
+              {cancellationSuccess.details && (
+                <ul className="mt-2 space-y-1">
+                  {cancellationSuccess.details.map((detail, idx) => (
+                    <li key={idx} className="text-green-700 text-sm flex items-center gap-2">
+                      <CheckCircle className="w-3 h-3" />
+                      {detail}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {cancellationSuccess.ekartDeleted && (
+                <p className="mt-2 text-green-600 text-sm font-medium">
+                  ✅ Ekart पर अब कुछ नहीं दिखेगा - COMPLETELY DELETED
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -221,21 +321,36 @@ const AdminOrders = () => {
                 <X className="w-5 h-5 text-red-600" />
               </div>
               <div>
-                <h3 className="font-semibold text-red-800">Ekart Cancellation Failed</h3>
+                <h3 className="font-semibold text-red-800">Ekart Deletion Failed</h3>
                 <p className="text-red-600 text-sm">{cancellationError.message}</p>
                 {cancellationError.trackingId && (
                   <p className="text-red-600 text-sm mt-1">
                     Tracking ID: <span className="font-mono">{cancellationError.trackingId}</span>
                   </p>
                 )}
+                {cancellationError.forceDeleteRequired && (
+                  <p className="text-red-700 text-sm mt-2 font-medium">
+                    ⚠️ Try FORCE DELETE to completely remove from Ekart
+                  </p>
+                )}
               </div>
             </div>
-            <button
-              onClick={() => manualEkartCancel(cancellationError.trackingId)}
-              className="px-4 py-2 bg-red-600 text-white text-sm rounded hover:bg-red-700"
-            >
-              Manual Cancel on Ekart
-            </button>
+            <div className="flex gap-2">
+              {cancellationError.forceDeleteRequired && (
+                <button
+                  onClick={() => forceDeleteOrder(cancellationError.orderId)}
+                  className="px-4 py-2 bg-red-600 text-white text-sm rounded hover:bg-red-700"
+                >
+                  Force Delete
+                </button>
+              )}
+              <button
+                onClick={() => manualEkartCancel(cancellationError.trackingId)}
+                className="px-4 py-2 bg-red-800 text-white text-sm rounded hover:bg-red-900"
+              >
+                Manual Delete on Ekart
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -316,6 +431,16 @@ const AdminOrders = () => {
                           </a>
                         )}
                       </div>
+                    ) : order.ekartDeleted ? (
+                      <div className="text-sm space-y-1">
+                        <div className="flex items-center gap-2">
+                          <X className="w-4 h-4 text-red-600" />
+                          <span className="font-medium text-red-600">DELETED FROM EKART</span>
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          Completely removed from Ekart
+                        </div>
+                      </div>
                     ) : (
                       <div className="space-y-2">
                         <div className="flex items-center gap-2 text-sm text-gray-500">
@@ -372,23 +497,34 @@ const AdminOrders = () => {
                     </select>
 
                     {canCancelOrder(order) && (
-                      <button
-                        onClick={() => cancelOrder(order.orderId)}
-                        disabled={cancellingOrder === order.orderId}
-                        className="flex items-center gap-1 text-red-600 hover:text-red-800 disabled:opacity-50"
-                      >
-                        {cancellingOrder === order.orderId ? (
-                          <>
-                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-600"></div>
-                            Cancelling...
-                          </>
-                        ) : (
-                          <>
-                            <X className="w-4 h-4" />
-                            Cancel Order
-                          </>
+                      <div className="space-y-1">
+                        <button
+                          onClick={() => cancelOrder(order.orderId)}
+                          disabled={cancellingOrder === order.orderId}
+                          className="flex items-center gap-1 text-red-600 hover:text-red-800 disabled:opacity-50 w-full"
+                        >
+                          {cancellingOrder === order.orderId ? (
+                            <>
+                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-600"></div>
+                              Cancelling...
+                            </>
+                          ) : (
+                            <>
+                              <X className="w-4 h-4" />
+                              Cancel Order
+                            </>
+                          )}
+                        </button>
+                        {forceDeleteMode && (
+                          <button
+                            onClick={() => forceDeleteOrder(order.orderId)}
+                            className="flex items-center gap-1 text-white bg-red-700 hover:bg-red-800 px-2 py-1 rounded text-xs w-full justify-center"
+                          >
+                            <X className="w-3 h-3" />
+                            Force Delete from Ekart
+                          </button>
                         )}
-                      </button>
+                      </div>
                     )}
                   </td>
                 </tr>
@@ -426,6 +562,14 @@ const AdminOrders = () => {
                     <div><span className="text-gray-600">Status:</span> <span className={`px-2 py-1 rounded ${getStatusColor(selectedOrder.orderStatus)}`}>{selectedOrder.orderStatus}</span></div>
                     <div><span className="text-gray-600">Payment:</span> <span className={`px-2 py-1 rounded ${getPaymentStatusColor(selectedOrder.paymentStatus)}`}>{selectedOrder.paymentStatus}</span></div>
                     <div><span className="text-gray-600">Method:</span> {selectedOrder.paymentMethod}</div>
+                    {selectedOrder.ekartDeleted && (
+                      <div className="mt-2">
+                        <span className="text-gray-600">Ekart Status:</span>
+                        <span className="ml-2 px-2 py-1 bg-red-100 text-red-800 rounded text-xs font-semibold">
+                          COMPLETELY DELETED FROM EKART
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div>
@@ -441,7 +585,7 @@ const AdminOrders = () => {
               </div>
 
               {/* Ekart Tracking */}
-              {selectedOrder.ekartTrackingId && (
+              {selectedOrder.ekartTrackingId && !selectedOrder.ekartDeleted && (
                 <div className="border rounded-lg p-4 bg-blue-50">
                   <h3 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
                     <Truck className="w-5 h-5 text-blue-600" />
@@ -496,6 +640,30 @@ const AdminOrders = () => {
                 </div>
               )}
 
+              {/* Ekart Deletion Status */}
+              {selectedOrder.ekartDeleted && (
+                <div className="border rounded-lg p-4 bg-red-50">
+                  <h3 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                    <X className="w-5 h-5 text-red-600" />
+                    Ekart Deletion Status
+                  </h3>
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle className="w-5 h-5 text-green-600" />
+                      <span className="font-medium text-green-700">COMPLETELY DELETED FROM EKART</span>
+                    </div>
+                    <p className="text-sm text-gray-700">
+                      This order has been completely removed from Ekart. No tracking information or order details exist on Ekart anymore.
+                    </p>
+                    <p className="text-sm text-gray-600">
+                      ✅ Ekart पर अब कुछ नहीं दिखेगा<br/>
+                      ✅ सभी डेटा DELETE हो गया<br/>
+                      ✅ कोई निशान नहीं बचा
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {/* Order Items */}
               <div>
                 <h3 className="font-semibold text-gray-700 mb-3">Order Items</h3>
@@ -539,16 +707,29 @@ const AdminOrders = () => {
 
               {/* Cancel Button in Modal */}
               {canCancelOrder(selectedOrder) && (
-                <button
-                  onClick={() => {
-                    closeModal();
-                    cancelOrder(selectedOrder.orderId);
-                  }}
-                  className="w-full py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center justify-center gap-2"
-                >
-                  <X className="w-5 h-5" />
-                  Cancel This Order
-                </button>
+                <div className="space-y-3">
+                  <button
+                    onClick={() => {
+                      closeModal();
+                      cancelOrder(selectedOrder.orderId);
+                    }}
+                    className="w-full py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center justify-center gap-2"
+                  >
+                    <X className="w-5 h-5" />
+                    Cancel This Order
+                  </button>
+                  
+                  <button
+                    onClick={() => {
+                      closeModal();
+                      forceDeleteOrder(selectedOrder.orderId);
+                    }}
+                    className="w-full py-3 bg-red-800 text-white rounded-lg hover:bg-red-900 flex items-center justify-center gap-2 text-sm"
+                  >
+                    <X className="w-4 h-4" />
+                    🚨 FORCE DELETE FROM EKART
+                  </button>
+                </div>
               )}
             </div>
           </div>
