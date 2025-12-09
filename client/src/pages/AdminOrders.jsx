@@ -1,613 +1,492 @@
-import React, { useEffect, useState } from 'react';
-import { Package, Truck, ExternalLink, RefreshCw, Eye, X, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { 
+  Package, Truck, MapPin, Clock, User, Phone, Mail, 
+  CreditCard, Calendar, CheckCircle, XCircle, AlertCircle,
+  ExternalLink, RefreshCw, ChevronDown, ChevronUp, Copy,
+  ShoppingBag, DollarSign, Tag, Home, IndianRupee, X
+} from 'lucide-react';
+import { useParams, useNavigate } from 'react-router-dom';
 import API from '../services/api';
 
-const AdminOrders = () => {
-  const [orders, setOrders] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [updatingOrder, setUpdatingOrder] = useState(null);
-  const [cancellingOrder, setCancellingOrder] = useState(null);
-  const [selectedOrder, setSelectedOrder] = useState(null);
+const EkartOrderDetails = () => {
+  const { orderId } = useParams();
+  const navigate = useNavigate();
+  
+  const [order, setOrder] = useState(null);
   const [trackingInfo, setTrackingInfo] = useState(null);
-  const [loadingTracking, setLoadingTracking] = useState(false);
-  const [creatingShipment, setCreatingShipment] = useState(null);
-  const [cancellationError, setCancellationError] = useState(null);
-  const [cancellationSuccess, setCancellationSuccess] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [expandedSections, setExpandedSections] = useState({
+    orderInfo: true,
+    customerInfo: true,
+    itemsInfo: true,
+    trackingInfo: true,
+    pricingInfo: true
+  });
 
   useEffect(() => {
-    fetchOrders();
-  }, []);
+    fetchOrderDetails();
+  }, [orderId]);
 
-  const fetchOrders = async () => {
+  const fetchOrderDetails = async () => {
     try {
-      const { data } = await API.get('/orders/admin/all');
-      
-      console.log('📦 Raw API Response:', data);
-      
-      let ordersArray;
-      if (Array.isArray(data)) {
-        ordersArray = data;
-      } else if (data.orders && Array.isArray(data.orders)) {
-        ordersArray = data.orders;
-      } else {
-        console.error('❌ Unexpected response format:', data);
-        ordersArray = [];
-      }
-      
-      console.log('✅ Parsed orders:', ordersArray.length, 'orders');
-      setOrders(ordersArray);
-      setCancellationError(null);
-      setCancellationSuccess(null);
+      setLoading(true);
+      const { data } = await API.get(`/orders/${orderId}`);
+      setOrder(data);
+      setTrackingInfo(data.trackingInfo);
     } catch (error) {
-      console.error('❌ Failed to fetch orders:', error);
-      console.error('Response:', error.response?.data);
-      alert('Failed to load orders: ' + (error.response?.data?.message || error.message));
+      console.error('Failed to fetch order:', error);
+      alert('Failed to load order details');
     } finally {
       setLoading(false);
     }
   };
 
-  const updateOrderStatus = async (orderId, newStatus) => {
-    setUpdatingOrder(orderId);
-    try {
-      await API.put(`/orders/admin/update-status/${orderId}`, { orderStatus: newStatus });
-      alert('Order status updated successfully!');
-      fetchOrders();
-    } catch (error) {
-      console.error('Failed to update order status:', error);
-      alert('Failed to update order status');
-    } finally {
-      setUpdatingOrder(null);
-    }
-  };
-
-  // ✅ FIXED: Admin Cancel Order Function
-  const cancelOrder = async (orderId) => {
-    if (!confirm(`Are you sure you want to cancel order ${orderId}?\n\nThis will cancel the order on Ekart and remove all shipment details.`)) {
-      return;
-    }
-    
-    setCancellingOrder(orderId);
-    setCancellationError(null);
-    setCancellationSuccess(null);
+  const refreshTracking = async () => {
+    if (!order?.ekartTrackingId) return;
     
     try {
-      const { data } = await API.put(`/orders/admin/cancel/${orderId}`);
-      
-      console.log('✅ Cancel response:', data);
-      
-      if (data.success) {
-        let successMessage = data.message || 'Order cancelled successfully!';
-        
-        if (data.ekartCancelled) {
-          successMessage += '\n✅ Ekart shipment fully cancelled.';
-        } else if (data.ekartWarning) {
-          successMessage += `\n⚠️ ${data.ekartWarning}`;
-        }
-        
-        setCancellationSuccess({
-          orderId,
-          message: successMessage
-        });
-        
-        // Refresh orders after 2 seconds
-        setTimeout(() => {
-          fetchOrders();
-        }, 2000);
-      } else {
-        setCancellationError({
-          orderId,
-          message: data.message || 'Failed to cancel order',
-          trackingId: data.trackingId
-        });
-      }
-      
+      setRefreshing(true);
+      const { data } = await API.get(`/orders/track/${orderId}`);
+      setTrackingInfo(data.trackingInfo);
     } catch (error) {
-      const errorMessage = error.response?.data?.message || 'Failed to cancel order';
-      const ekartError = error.response?.data?.ekartCancelError;
-      
-      if (ekartError) {
-        setCancellationError({
-          orderId,
-          message: `Ekart cancellation failed: ${ekartError}`,
-          trackingId: error.response?.data?.trackingId
-        });
-        
-        // Ask user if they want to try manual cancellation
-        const shouldContinue = confirm(`Ekart cancellation failed: ${ekartError}\n\nDo you want to try manual cancellation on Ekart portal?`);
-        
-        if (shouldContinue) {
-          manualEkartCancel(error.response?.data?.trackingId);
-        }
-      } else {
-        setCancellationError({
-          orderId,
-          message: errorMessage
-        });
-      }
+      console.error('Failed to refresh tracking:', error);
     } finally {
-      setCancellingOrder(null);
+      setRefreshing(false);
     }
   };
 
-  const createShipment = async (orderId) => {
-    if (!confirm('Create Ekart shipment for this order?')) return;
-    
-    setCreatingShipment(orderId);
-    try {
-      const { data } = await API.post(`/orders/admin/create-shipment/${orderId}`);
-      alert(`Shipment created!\nTracking ID: ${data.trackingId}\nAWB: ${data.awb}`);
-      fetchOrders();
-    } catch (error) {
-      alert(error.response?.data?.message || 'Failed to create shipment');
-    } finally {
-      setCreatingShipment(null);
-    }
+  const toggleSection = (section) => {
+    setExpandedSections(prev => ({
+      ...prev,
+      [section]: !prev[section]
+    }));
   };
 
-  const viewOrderDetails = async (order) => {
-    setSelectedOrder(order);
-    if (order.ekartTrackingId) {
-      setLoadingTracking(true);
-      try {
-        const { data } = await API.get(`/orders/track/${order.orderId}`);
-        setTrackingInfo(data.trackingInfo);
-      } catch (error) {
-        console.error('Failed to fetch tracking:', error);
-      } finally {
-        setLoadingTracking(false);
-      }
-    }
-  };
-
-  const closeModal = () => {
-    setSelectedOrder(null);
-    setTrackingInfo(null);
-  };
-
-  // Manual Ekart cancellation on portal
-  const manualEkartCancel = (trackingId) => {
-    if (!trackingId) {
-      alert('No tracking ID available for manual cancellation.');
-      return;
-    }
-    
-    const ekartUrl = `https://app.elite.ekartlogistics.in/track/${trackingId}`;
-    const portalUrl = 'https://app.elite.ekartlogistics.in/dashboard';
-    
-    const confirmManual = confirm(
-      `Please manually cancel on Ekart portal:\n\n` +
-      `1. Login to Ekart Portal: ${portalUrl}\n` +
-      `2. Go to Orders → Ready to Ship\n` +
-      `3. Find order with tracking ID: ${trackingId}\n` +
-      `4. Click "Cancel Order"\n` +
-      `5. Confirm cancellation in the popup\n\n` +
-      `Click OK to open Ekart portal.`
-    );
-    
-    if (confirmManual) {
-      window.open(portalUrl, '_blank');
-      
-      // Update local order status after manual cancellation
-      const updateLocally = confirm('Have you successfully cancelled the order on Ekart?\n\nClick OK to mark order as cancelled locally.');
-      if (updateLocally) {
-        updateOrderStatus(cancellationError?.orderId, 'cancelled');
-      }
-    }
+  const copyToClipboard = (text) => {
+    navigator.clipboard.writeText(text);
+    alert('Copied to clipboard!');
   };
 
   const getStatusColor = (status) => {
-    switch (status) {
-      case 'delivered': return 'bg-green-100 text-green-800';
-      case 'shipped': return 'bg-blue-100 text-blue-800';
-      case 'confirmed': return 'bg-orange-100 text-orange-800';
-      case 'cancelled': return 'bg-red-100 text-red-800';
-      default: return 'bg-gray-100 text-gray-800';
-    }
+    const colors = {
+      pending: 'bg-yellow-100 text-yellow-800 border-yellow-300',
+      confirmed: 'bg-blue-100 text-blue-800 border-blue-300',
+      shipped: 'bg-purple-100 text-purple-800 border-purple-300',
+      delivered: 'bg-green-100 text-green-800 border-green-300',
+      cancelled: 'bg-red-100 text-red-800 border-red-300'
+    };
+    return colors[status] || 'bg-gray-100 text-gray-800 border-gray-300';
   };
 
   const getPaymentStatusColor = (status) => {
-    switch (status) {
-      case 'success': return 'bg-green-100 text-green-800';
-      case 'pending': return 'bg-yellow-100 text-yellow-800';
-      case 'failed': return 'bg-red-100 text-red-800';
-      default: return 'bg-gray-100 text-gray-800';
-    }
-  };
-
-  const canCancelOrder = (order) => {
-    return !['shipped', 'delivered', 'cancelled'].includes(order.orderStatus);
+    const colors = {
+      success: 'bg-green-100 text-green-800 border-green-300',
+      pending: 'bg-yellow-100 text-yellow-800 border-yellow-300',
+      failed: 'bg-red-100 text-red-800 border-red-300',
+      processing: 'bg-blue-100 text-blue-800 border-blue-300'
+    };
+    return colors[status] || 'bg-gray-100 text-gray-800 border-gray-300';
   };
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
+      <div className="flex items-center justify-center min-h-screen bg-gray-50">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading orders...</p>
+          <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600 font-medium">Loading order details...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!order) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-50">
+        <div className="text-center">
+          <Package className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+          <h2 className="text-2xl font-bold text-gray-800">Order Not Found</h2>
+          <button 
+            onClick={() => navigate('/orders')}
+            className="mt-4 px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+          >
+            Back to Orders
+          </button>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      <div className="flex justify-between items-center mb-6">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-800">All Orders</h1>
-          <p className="text-gray-600 mt-1">{orders.length} total orders</p>
-        </div>
-        <button
-          onClick={fetchOrders}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-        >
-          <RefreshCw className="w-4 h-4" />
-          Refresh
-        </button>
-      </div>
-
-      {/* Cancellation Success Banner */}
-      {cancellationSuccess && (
-        <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg">
-          <div className="flex items-center gap-3">
-            <div className="bg-green-100 p-2 rounded-full">
-              <AlertCircle className="w-5 h-5 text-green-600" />
-            </div>
-            <div>
-              <h3 className="font-semibold text-green-800">Order Cancelled Successfully</h3>
-              <p className="text-green-600 text-sm">{cancellationSuccess.message}</p>
-              <p className="text-green-600 text-sm mt-1">Order ID: {cancellationSuccess.orderId}</p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Cancellation Error Banner */}
-      {cancellationError && (
-        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+    <div className="min-h-screen bg-gray-50 py-6">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        {/* Header */}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="bg-red-100 p-2 rounded-full">
-                <X className="w-5 h-5 text-red-600" />
+            <div>
+              <div className="flex items-center gap-3">
+                <h1 className="text-2xl font-bold text-gray-900">Order #{order.orderId}</h1>
+                <button 
+                  onClick={() => copyToClipboard(order.orderId)}
+                  className="p-1.5 hover:bg-gray-100 rounded transition-colors"
+                  title="Copy Order ID"
+                >
+                  <Copy className="w-4 h-4 text-gray-500" />
+                </button>
               </div>
-              <div>
-                <h3 className="font-semibold text-red-800">Cancellation Failed</h3>
-                <p className="text-red-600 text-sm">{cancellationError.message}</p>
-                {cancellationError.trackingId && (
-                  <p className="text-red-600 text-sm mt-1">
-                    Tracking ID: <span className="font-mono">{cancellationError.trackingId}</span>
-                  </p>
-                )}
-              </div>
+              <p className="text-sm text-gray-500 mt-1">
+                Placed on {new Date(order.createdAt).toLocaleString('en-IN', {
+                  dateStyle: 'medium',
+                  timeStyle: 'short'
+                })}
+              </p>
             </div>
-            {cancellationError.trackingId && (
+            <div className="flex items-center gap-3">
               <button
-                onClick={() => manualEkartCancel(cancellationError.trackingId)}
-                className="px-4 py-2 bg-red-600 text-white text-sm rounded hover:bg-red-700 transition-colors"
+                onClick={fetchOrderDetails}
+                disabled={refreshing}
+                className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50"
               >
-                Manual Cancel on Ekart
+                <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+                Refresh
               </button>
-            )}
+              <button
+                onClick={() => navigate(-1)}
+                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+              >
+                Back
+              </button>
+            </div>
+          </div>
+
+          {/* Status Badges */}
+          <div className="flex items-center gap-3 mt-4">
+            <div className={`px-4 py-2 rounded-lg border font-semibold text-sm ${getStatusColor(order.orderStatus)}`}>
+              Order Status: {order.orderStatus.toUpperCase()}
+            </div>
+            <div className={`px-4 py-2 rounded-lg border font-semibold text-sm ${getPaymentStatusColor(order.paymentStatus)}`}>
+              Payment: {order.paymentStatus.toUpperCase()}
+            </div>
+            <div className="px-4 py-2 bg-gray-100 text-gray-800 rounded-lg border border-gray-300 font-semibold text-sm">
+              Method: {order.paymentMethod.toUpperCase()}
+            </div>
           </div>
         </div>
-      )}
 
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Order Details
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Customer
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Amount
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Payment
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Ekart Tracking
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {orders.map((order) => (
-                <tr key={order._id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm">
-                      <div className="font-medium text-gray-900">#{order.orderId}</div>
-                      <div className="text-gray-500">{new Date(order.createdAt).toLocaleDateString()}</div>
-                      <div className="text-gray-500">{order.items.length} item{order.items.length > 1 ? 's' : ''}</div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Left Column - Main Details */}
+          <div className="lg:col-span-2 space-y-6">
+            {/* Ekart Tracking Section */}
+            {order.ekartTrackingId && (
+              <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+                <div 
+                  className="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50 transition-colors"
+                  onClick={() => toggleSection('trackingInfo')}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-blue-100 rounded-lg">
+                      <Truck className="w-6 h-6 text-blue-600" />
                     </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm">
-                      <div className="font-medium text-gray-900">{order.user?.username || 'N/A'}</div>
-                      <div className="text-gray-500">{order.shippingAddress?.mobile}</div>
-                      <div className="text-gray-500">{order.shippingAddress?.city || 'N/A'}</div>
+                    <div>
+                      <h2 className="text-lg font-bold text-gray-900">Ekart Shipment Tracking</h2>
+                      <p className="text-sm text-gray-500">Live tracking updates</p>
                     </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm font-medium text-gray-900">₹{order.finalAmount}</div>
-                    <div className="text-xs text-gray-500">{order.paymentMethod}</div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getPaymentStatusColor(order.paymentStatus)}`}>
-                      {order.paymentStatus}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    {order.ekartTrackingId ? (
-                      <div className="text-sm space-y-1">
-                        <div className="flex items-center gap-2">
-                          <Truck className="w-4 h-4 text-green-600" />
-                          <span className="font-medium text-green-600">Shipment Created</span>
-                        </div>
-                        <div className="text-xs text-gray-600">
-                          <div>ID: {order.ekartTrackingId}</div>
-                          {order.ekartAWB && <div>AWB: {order.ekartAWB}</div>}
-                        </div>
-                        {order.publicTrackingUrl && (
-                          <a
-                            href={order.publicTrackingUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 transition-colors"
+                  </div>
+                  {expandedSections.trackingInfo ? <ChevronUp className="w-5 h-5 text-gray-400" /> : <ChevronDown className="w-5 h-5 text-gray-400" />}
+                </div>
+
+                {expandedSections.trackingInfo && (
+                  <div className="p-6 border-t border-gray-200">
+                    <div className="grid grid-cols-2 gap-4 mb-6">
+                      <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                        <p className="text-sm text-gray-600 mb-1">Tracking ID</p>
+                        <div className="flex items-center justify-between">
+                          <p className="font-mono font-semibold text-blue-900">{order.ekartTrackingId}</p>
+                          <button 
+                            onClick={() => copyToClipboard(order.ekartTrackingId)}
+                            className="p-1 hover:bg-blue-100 rounded"
                           >
-                            Track on Ekart <ExternalLink className="w-3 h-3" />
-                          </a>
-                        )}
+                            <Copy className="w-4 h-4 text-blue-600" />
+                          </button>
+                        </div>
+                      </div>
+                      {order.ekartAWB && (
+                        <div className="bg-purple-50 p-4 rounded-lg border border-purple-200">
+                          <p className="text-sm text-gray-600 mb-1">AWB Number</p>
+                          <div className="flex items-center justify-between">
+                            <p className="font-mono font-semibold text-purple-900">{order.ekartAWB}</p>
+                            <button 
+                              onClick={() => copyToClipboard(order.ekartAWB)}
+                              className="p-1 hover:bg-purple-100 rounded"
+                            >
+                              <Copy className="w-4 h-4 text-purple-600" />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Tracking Timeline */}
+                    {trackingInfo && trackingInfo.scans && trackingInfo.scans.length > 0 ? (
+                      <div>
+                        <div className="flex items-center justify-between mb-4">
+                          <h3 className="font-semibold text-gray-900">Shipment Journey</h3>
+                          <button
+                            onClick={refreshTracking}
+                            disabled={refreshing}
+                            className="flex items-center gap-2 text-sm text-blue-600 hover:text-blue-700 disabled:opacity-50"
+                          >
+                            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+                            Refresh Tracking
+                          </button>
+                        </div>
+                        <div className="space-y-4">
+                          {trackingInfo.scans.map((scan, index) => (
+                            <div key={index} className="flex gap-4">
+                              <div className="flex flex-col items-center">
+                                <div className={`w-4 h-4 rounded-full ${index === 0 ? 'bg-blue-600' : 'bg-gray-300'} ring-4 ${index === 0 ? 'ring-blue-100' : 'ring-gray-100'}`}></div>
+                                {index < trackingInfo.scans.length - 1 && (
+                                  <div className="w-0.5 h-full bg-gray-300 my-2"></div>
+                                )}
+                              </div>
+                              <div className="flex-1 pb-6">
+                                <div className={`font-semibold ${index === 0 ? 'text-blue-900' : 'text-gray-900'}`}>
+                                  {scan.status}
+                                </div>
+                                {scan.location && scan.location !== 'N/A' && (
+                                  <div className="flex items-center gap-1 text-sm text-gray-600 mt-1">
+                                    <MapPin className="w-3 h-3" />
+                                    {scan.location}
+                                  </div>
+                                )}
+                                {scan.remarks && (
+                                  <p className="text-sm text-gray-500 mt-1">{scan.remarks}</p>
+                                )}
+                                <div className="flex items-center gap-1 text-xs text-gray-400 mt-2">
+                                  <Clock className="w-3 h-3" />
+                                  {new Date(scan.timestamp).toLocaleString('en-IN')}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     ) : (
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2 text-sm text-gray-500">
-                          <Package className="w-4 h-4" />
-                          <span>No shipment</span>
-                        </div>
-                        {order.orderStatus === 'confirmed' && order.paymentStatus === 'success' && (
-                          <button
-                            onClick={() => createShipment(order.orderId)}
-                            disabled={creatingShipment === order.orderId}
-                            className="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1 transition-colors"
-                          >
-                            {creatingShipment === order.orderId ? (
-                              <>
-                                <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
-                                Creating...
-                              </>
-                            ) : (
-                              <>
-                                <Truck className="w-3 h-3" />
-                                Create Shipment
-                              </>
-                            )}
-                          </button>
-                        )}
+                      <div className="text-center py-8 bg-gray-50 rounded-lg">
+                        <Package className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+                        <p className="text-gray-600">No tracking updates available yet</p>
+                        <p className="text-sm text-gray-500 mt-1">Check back later for updates</p>
                       </div>
                     )}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusColor(order.orderStatus)}`}>
-                      {order.orderStatus}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm space-y-2">
-                    <button
-                      onClick={() => viewOrderDetails(order)}
-                      className="flex items-center gap-1 text-blue-600 hover:text-blue-800 mb-2 transition-colors"
-                    >
-                      <Eye className="w-4 h-4" />
-                      View Details
-                    </button>
-                    
-                    <select
-                      value={order.orderStatus}
-                      onChange={(e) => updateOrderStatus(order.orderId, e.target.value)}
-                      disabled={updatingOrder === order.orderId}
-                      className="block w-full px-2 py-1 text-xs border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 mb-2"
-                    >
-                      <option value="pending">Pending</option>
-                      <option value="confirmed">Confirmed</option>
-                      <option value="shipped">Shipped</option>
-                      <option value="delivered">Delivered</option>
-                      <option value="cancelled">Cancelled</option>
-                    </select>
 
-                    {canCancelOrder(order) && (
-                      <button
-                        onClick={() => cancelOrder(order.orderId)}
-                        disabled={cancellingOrder === order.orderId}
-                        className="flex items-center gap-1 text-red-600 hover:text-red-800 disabled:opacity-50 transition-colors"
+                    {order.publicTrackingUrl && (
+                      <a
+                        href={order.publicTrackingUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-4 flex items-center justify-center gap-2 w-full py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-700 hover:to-blue-800 transition-all shadow-sm"
                       >
-                        {cancellingOrder === order.orderId ? (
-                          <>
-                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-600"></div>
-                            Cancelling...
-                          </>
-                        ) : (
-                          <>
-                            <X className="w-4 h-4" />
-                            Cancel Order
-                          </>
-                        )}
-                      </button>
+                        Track on Ekart Portal
+                        <ExternalLink className="w-4 h-4" />
+                      </a>
                     )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                  </div>
+                )}
+              </div>
+            )}
 
-        {orders.length === 0 && (
-          <div className="text-center py-12">
-            <Package className="mx-auto h-12 w-12 text-gray-400" />
-            <h3 className="mt-2 text-sm font-medium text-gray-900">No orders found</h3>
-          </div>
-        )}
-      </div>
-
-      {/* Order Details Modal */}
-      {selectedOrder && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="sticky top-0 bg-white border-b px-6 py-4 flex justify-between items-center">
-              <h2 className="text-2xl font-bold">Order #{selectedOrder.orderId}</h2>
-              <button onClick={closeModal} className="text-gray-500 hover:text-gray-700">
-                <X className="w-6 h-6" />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-6">
-              {/* Order Info */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <h3 className="font-semibold text-gray-700 mb-2">Order Information</h3>
-                  <div className="space-y-1 text-sm">
-                    <div><span className="text-gray-600">Date:</span> {new Date(selectedOrder.createdAt).toLocaleString()}</div>
-                    <div><span className="text-gray-600">Status:</span> <span className={`px-2 py-1 rounded ${getStatusColor(selectedOrder.orderStatus)}`}>{selectedOrder.orderStatus}</span></div>
-                    <div><span className="text-gray-600">Payment:</span> <span className={`px-2 py-1 rounded ${getPaymentStatusColor(selectedOrder.paymentStatus)}`}>{selectedOrder.paymentStatus}</span></div>
-                    <div><span className="text-gray-600">Method:</span> {selectedOrder.paymentMethod}</div>
+            {/* Order Items */}
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+              <div 
+                className="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50 transition-colors"
+                onClick={() => toggleSection('itemsInfo')}
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-purple-100 rounded-lg">
+                    <ShoppingBag className="w-6 h-6 text-purple-600" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold text-gray-900">Order Items</h2>
+                    <p className="text-sm text-gray-500">{order.items.length} item(s)</p>
                   </div>
                 </div>
-                <div>
-                  <h3 className="font-semibold text-gray-700 mb-2">Customer Details</h3>
-                  <div className="space-y-1 text-sm">
-                    <div><span className="text-gray-600">Name:</span> {selectedOrder.shippingAddress.name}</div>
-                    <div><span className="text-gray-600">Mobile:</span> {selectedOrder.shippingAddress.mobile}</div>
-                    <div><span className="text-gray-600">Address:</span> {selectedOrder.shippingAddress.address}, {selectedOrder.shippingAddress.locality}</div>
-                    <div><span className="text-gray-600">City:</span> {selectedOrder.shippingAddress.city}, {selectedOrder.shippingAddress.state}</div>
-                    <div><span className="text-gray-600">Pincode:</span> {selectedOrder.shippingAddress.pincode}</div>
-                  </div>
-                </div>
+                {expandedSections.itemsInfo ? <ChevronUp className="w-5 h-5 text-gray-400" /> : <ChevronDown className="w-5 h-5 text-gray-400" />}
               </div>
 
-              {/* Ekart Tracking */}
-              {selectedOrder.ekartTrackingId && (
-                <div className="border rounded-lg p-4 bg-blue-50">
-                  <h3 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
-                    <Truck className="w-5 h-5 text-blue-600" />
-                    Ekart Shipment Details
-                  </h3>
-                  <div className="grid grid-cols-2 gap-4 text-sm mb-4">
-                    <div><span className="text-gray-600">Tracking ID:</span> <span className="font-mono">{selectedOrder.ekartTrackingId}</span></div>
-                    {selectedOrder.ekartAWB && <div><span className="text-gray-600">AWB Number:</span> <span className="font-mono">{selectedOrder.ekartAWB}</span></div>}
-                  </div>
-                  
-                  {loadingTracking ? (
-                    <div className="text-center py-4">
-                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
-                      <p className="mt-2 text-gray-600">Loading tracking info...</p>
-                    </div>
-                  ) : trackingInfo && trackingInfo.scans && trackingInfo.scans.length > 0 ? (
-                    <div>
-                      <h4 className="font-semibold mb-2">Tracking History</h4>
-                      <div className="space-y-3">
-                        {trackingInfo.scans.map((scan, index) => (
-                          <div key={index} className="flex gap-3">
-                            <div className="flex flex-col items-center">
-                              <div className={`w-3 h-3 rounded-full ${index === 0 ? 'bg-blue-600' : 'bg-gray-300'}`}></div>
-                              {index < trackingInfo.scans.length - 1 && <div className="w-0.5 h-full bg-gray-300 my-1"></div>}
+              {expandedSections.itemsInfo && (
+                <div className="p-6 border-t border-gray-200">
+                  <div className="space-y-4">
+                    {order.items.map((item, index) => (
+                      <div key={index} className="flex gap-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                        {item.image && (
+                          <img 
+                            src={item.image} 
+                            alt={item.name}
+                            className="w-20 h-20 object-cover rounded-lg border border-gray-300"
+                          />
+                        )}
+                        <div className="flex-1">
+                          <h3 className="font-semibold text-gray-900 mb-1">{item.name}</h3>
+                          <div className="flex items-center gap-4 text-sm text-gray-600">
+                            <div className="flex items-center gap-1">
+                              <Tag className="w-4 h-4" />
+                              SKU: {item.productId}
                             </div>
-                            <div className="flex-1 pb-3">
-                              <div className="font-medium text-gray-900">{scan.status}</div>
-                              {scan.location !== 'N/A' && <div className="text-sm text-gray-600">{scan.location}</div>}
-                              {scan.remarks && <div className="text-xs text-gray-500">{scan.remarks}</div>}
-                              <div className="text-xs text-gray-400 mt-1">{new Date(scan.timestamp).toLocaleString()}</div>
+                            <div>Qty: {item.quantity}</div>
+                          </div>
+                          <div className="mt-2 flex items-center justify-between">
+                            <div className="text-sm text-gray-600">
+                              ₹{item.sellingPrice} × {item.quantity}
+                            </div>
+                            <div className="font-bold text-lg text-gray-900">
+                              ₹{item.totalPrice}
                             </div>
                           </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="text-center py-4 text-gray-600">
-                      No tracking updates yet
-                    </div>
-                  )}
-
-                  {selectedOrder.publicTrackingUrl && (
-                    <a
-                      href={selectedOrder.publicTrackingUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="mt-4 inline-flex items-center gap-2 text-blue-600 hover:text-blue-800 transition-colors"
-                    >
-                      Track on Ekart Portal <ExternalLink className="w-4 h-4" />
-                    </a>
-                  )}
-                </div>
-              )}
-
-              {/* Order Items */}
-              <div>
-                <h3 className="font-semibold text-gray-700 mb-3">Order Items</h3>
-                <div className="space-y-3">
-                  {selectedOrder.items.map((item, index) => (
-                    <div key={index} className="flex justify-between items-center border-b pb-3">
-                      <div className="flex items-center gap-3">
-                        {item.image && (
-                          <img src={item.image} alt={item.name} className="w-16 h-16 object-cover rounded" />
-                        )}
-                        <div>
-                          <div className="font-medium">{item.name}</div>
-                          <div className="text-sm text-gray-600">Qty: {item.quantity} × ₹{item.sellingPrice}</div>
                         </div>
                       </div>
-                      <div className="font-semibold">₹{item.totalPrice}</div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Right Column - Customer & Pricing */}
+          <div className="space-y-6">
+            {/* Customer Details */}
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+              <div 
+                className="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50 transition-colors"
+                onClick={() => toggleSection('customerInfo')}
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-green-100 rounded-lg">
+                    <User className="w-6 h-6 text-green-600" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold text-gray-900">Customer Details</h2>
+                  </div>
+                </div>
+                {expandedSections.customerInfo ? <ChevronUp className="w-5 h-5 text-gray-400" /> : <ChevronDown className="w-5 h-5 text-gray-400" />}
+              </div>
+
+              {expandedSections.customerInfo && (
+                <div className="p-6 border-t border-gray-200 space-y-4">
+                  <div>
+                    <div className="flex items-center gap-2 text-gray-600 mb-1">
+                      <User className="w-4 h-4" />
+                      <span className="text-sm font-medium">Name</span>
                     </div>
-                  ))}
+                    <p className="text-gray-900 font-semibold">{order.shippingAddress.name}</p>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center gap-2 text-gray-600 mb-1">
+                      <Phone className="w-4 h-4" />
+                      <span className="text-sm font-medium">Mobile</span>
+                    </div>
+                    <p className="text-gray-900 font-semibold">{order.shippingAddress.mobile}</p>
+                  </div>
+
+                  {order.shippingAddress.alternatePhone && (
+                    <div>
+                      <div className="flex items-center gap-2 text-gray-600 mb-1">
+                        <Phone className="w-4 h-4" />
+                        <span className="text-sm font-medium">Alternate Phone</span>
+                      </div>
+                      <p className="text-gray-900 font-semibold">{order.shippingAddress.alternatePhone}</p>
+                    </div>
+                  )}
+
+                  <div>
+                    <div className="flex items-center gap-2 text-gray-600 mb-1">
+                      <Home className="w-4 h-4" />
+                      <span className="text-sm font-medium">Shipping Address</span>
+                    </div>
+                    <div className="text-gray-900 space-y-1">
+                      <p>{order.shippingAddress.address}</p>
+                      <p>{order.shippingAddress.locality}</p>
+                      <p>{order.shippingAddress.city}, {order.shippingAddress.state}</p>
+                      <p className="font-semibold">PIN: {order.shippingAddress.pincode}</p>
+                      {order.shippingAddress.landmark && (
+                        <p className="text-sm text-gray-600">Landmark: {order.shippingAddress.landmark}</p>
+                      )}
+                    </div>
+                  </div>
                 </div>
+              )}
+            </div>
+
+            {/* Pricing Details */}
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+              <div 
+                className="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50 transition-colors"
+                onClick={() => toggleSection('pricingInfo')}
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-orange-100 rounded-lg">
+                    <IndianRupee className="w-6 h-6 text-orange-600" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold text-gray-900">Pricing Details</h2>
+                  </div>
+                </div>
+                {expandedSections.pricingInfo ? <ChevronUp className="w-5 h-5 text-gray-400" /> : <ChevronDown className="w-5 h-5 text-gray-400" />}
               </div>
 
-              {/* Order Total */}
-              <div className="border-t pt-4">
-                <div className="flex justify-between text-sm mb-2">
-                  <span className="text-gray-600">Subtotal:</span>
-                  <span>₹{selectedOrder.totalAmount}</span>
-                </div>
-                <div className="flex justify-between text-sm mb-2">
-                  <span className="text-gray-600">Discount:</span>
-                  <span className="text-green-600">-₹{selectedOrder.discount}</span>
-                </div>
-                <div className="flex justify-between text-sm mb-2">
-                  <span className="text-gray-600">Shipping:</span>
-                  <span>₹{selectedOrder.shippingCharge}</span>
-                </div>
-                <div className="flex justify-between text-lg font-bold border-t pt-2">
-                  <span>Total:</span>
-                  <span>₹{selectedOrder.finalAmount}</span>
-                </div>
-              </div>
+              {expandedSections.pricingInfo && (
+                <div className="p-6 border-t border-gray-200 space-y-3">
+                  <div className="flex justify-between text-gray-700">
+                    <span>Subtotal ({order.items.length} items)</span>
+                    <span className="font-semibold">₹{order.totalAmount}</span>
+                  </div>
+                  
+                  <div className="flex justify-between text-green-600">
+                    <span>Discount</span>
+                    <span className="font-semibold">-₹{order.discount}</span>
+                  </div>
+                  
+                  <div className="flex justify-between text-gray-700">
+                    <span>Shipping Charges</span>
+                    <span className="font-semibold">₹{order.shippingCharge}</span>
+                  </div>
+                  
+                  <div className="border-t-2 border-gray-300 pt-3 mt-3">
+                    <div className="flex justify-between text-xl font-bold text-gray-900">
+                      <span>Total Amount</span>
+                      <span className="text-blue-600">₹{order.finalAmount}</span>
+                    </div>
+                  </div>
 
-              {/* Cancel Button in Modal */}
-              {canCancelOrder(selectedOrder) && (
-                <button
-                  onClick={() => {
-                    closeModal();
-                    cancelOrder(selectedOrder.orderId);
-                  }}
-                  className="w-full py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center justify-center gap-2 transition-colors"
-                >
-                  <X className="w-5 h-5" />
-                  Cancel This Order
-                </button>
+                  <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                    <div className="flex items-center gap-2 text-blue-900">
+                      <CreditCard className="w-4 h-4" />
+                      <span className="font-semibold text-sm">Payment Method</span>
+                    </div>
+                    <p className="text-blue-800 font-bold mt-1 uppercase">{order.paymentMethod}</p>
+                  </div>
+
+                  {order.expectedDelivery && (
+                    <div className="mt-4 p-3 bg-green-50 rounded-lg border border-green-200">
+                      <div className="flex items-center gap-2 text-green-900">
+                        <Calendar className="w-4 h-4" />
+                        <span className="font-semibold text-sm">Expected Delivery</span>
+                      </div>
+                      <p className="text-green-800 font-bold mt-1">
+                        {new Date(order.expectedDelivery).toLocaleDateString('en-IN', { 
+                          dateStyle: 'long' 
+                        })}
+                      </p>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 };
 
-export default AdminOrders;
+export default EkartOrderDetails;
