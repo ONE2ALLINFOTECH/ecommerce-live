@@ -1,4 +1,4 @@
-// routes/orderRoutes.js - 100% COMPLETE FIXED CODE
+// routes/orderRoutes.js - COMPLETE CODE WITH INVOICE DOWNLOAD
 const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
@@ -606,6 +606,106 @@ router.get('/label/:orderId', protectCustomer, async (req, res) => {
   }
 });
 
+// ========== DOWNLOAD INVOICE - CUSTOMER ========== 
+router.get('/invoice/:orderId', protectCustomer, async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const userId = req.user._id;
+    
+    console.log('\n🧾 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('👤 CUSTOMER DOWNLOADING INVOICE');
+    console.log('📦 Order ID:', orderId);
+    console.log('👤 User ID:', userId);
+    
+    const order = await Order.findOne({ orderId, user: userId });
+    if (!order) {
+      return res.status(404).json({ message: 'Order not found' });
+    }
+
+    if (!order.ekartTrackingId) {
+      return res.status(400).json({ 
+        message: 'No tracking ID found for this order',
+        orderId: order.orderId
+      });
+    }
+
+    const result = await EkartService.downloadInvoice([order.ekartTrackingId]);
+
+    if (!result.success) {
+      return res.status(500).json({
+        message: 'Failed to download invoice from Ekart',
+        error: result.message
+      });
+    }
+
+    if (result.type === 'pdf') {
+      res.setHeader('Content-Type', result.contentType);
+      res.setHeader('Content-Disposition', `attachment; filename="invoice_${order.ekartTrackingId}.pdf"`);
+      
+      console.log(`✅ Invoice PDF sent to customer for order ${orderId}`);
+      return res.send(result.data);
+    } else {
+      return res.json({
+        success: true,
+        message: 'Invoice data fetched successfully',
+        data: result.data
+      });
+    }
+  } catch (error) {
+    console.error('❌ Customer invoice download error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to download invoice',
+      error: error.message
+    });
+  }
+});
+
+// ========== DOWNLOAD BOTH LABEL & INVOICE - CUSTOMER ========== 
+router.get('/download-all/:orderId', protectCustomer, async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const userId = req.user._id;
+    
+    console.log('\n📦 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('👤 CUSTOMER DOWNLOADING LABEL & INVOICE');
+    console.log('📦 Order ID:', orderId);
+    console.log('👤 User ID:', userId);
+    
+    const order = await Order.findOne({ orderId, user: userId });
+    if (!order) {
+      return res.status(404).json({ message: 'Order not found' });
+    }
+
+    if (!order.ekartTrackingId) {
+      return res.status(400).json({ 
+        message: 'No tracking ID found for this order',
+        orderId: order.orderId
+      });
+    }
+
+    const result = await EkartService.downloadLabelAndInvoice(order.ekartTrackingId);
+
+    return res.json({
+      success: true,
+      message: 'Label and invoice download completed',
+      label: result.label ? 'Available' : 'Failed',
+      invoice: result.invoice ? 'Available' : 'Failed',
+      labelError: result.labelError,
+      invoiceError: result.invoiceError,
+      orderId: order.orderId,
+      trackingId: order.ekartTrackingId
+    });
+  } catch (error) {
+    console.error('❌ Customer download all error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to download documents',
+      error: error.message
+    });
+  }
+});
+
 // CHECK SERVICEABILITY
 router.get('/serviceability/:pincode', async (req, res) => {
   try {
@@ -1045,6 +1145,105 @@ router.get('/admin/label/:orderId', protectAdmin, async (req, res) => {
   }
 });
 
+// ========== DOWNLOAD INVOICE - ADMIN (SINGLE) ========== 
+router.get('/admin/invoice/:orderId', protectAdmin, async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    
+    console.log('\n🧾 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('📦 ADMIN DOWNLOADING INVOICE FOR ORDER:', orderId);
+    console.log('👤 Admin:', req.admin.email);
+    
+    const order = await Order.findOne({ orderId });
+    if (!order) {
+      return res.status(404).json({ message: 'Order not found' });
+    }
+
+    if (!order.ekartTrackingId) {
+      return res.status(400).json({ 
+        message: 'No tracking ID found for this order',
+        orderId: order.orderId
+      });
+    }
+
+    const result = await EkartService.downloadInvoice([order.ekartTrackingId]);
+
+    if (!result.success) {
+      return res.status(500).json({
+        message: 'Failed to download invoice from Ekart',
+        error: result.message
+      });
+    }
+
+    if (result.type === 'pdf') {
+      res.setHeader('Content-Type', result.contentType);
+      res.setHeader('Content-Disposition', `attachment; filename="invoice_${order.ekartTrackingId}.pdf"`);
+      
+      console.log(`✅ Invoice PDF sent for order ${orderId}`);
+      return res.send(result.data);
+    } else {
+      return res.json({
+        success: true,
+        message: 'Invoice data fetched successfully',
+        data: result.data,
+        orderId: order.orderId,
+        trackingId: order.ekartTrackingId
+      });
+    }
+  } catch (error) {
+    console.error('❌ Admin invoice download error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to download invoice',
+      error: error.message
+    });
+  }
+});
+
+// ========== DOWNLOAD BOTH LABEL & INVOICE - ADMIN ========== 
+router.get('/admin/download-all/:orderId', protectAdmin, async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    
+    console.log('\n📦 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('📦 ADMIN DOWNLOADING LABEL & INVOICE');
+    console.log('📦 Order ID:', orderId);
+    console.log('👤 Admin:', req.admin.email);
+    
+    const order = await Order.findOne({ orderId });
+    if (!order) {
+      return res.status(404).json({ message: 'Order not found' });
+    }
+
+    if (!order.ekartTrackingId) {
+      return res.status(400).json({ 
+        message: 'No tracking ID found for this order',
+        orderId: order.orderId
+      });
+    }
+
+    const result = await EkartService.downloadLabelAndInvoice(order.ekartTrackingId);
+
+    return res.json({
+      success: true,
+      message: 'Label and invoice download completed',
+      label: result.label ? 'Available' : 'Failed',
+      invoice: result.invoice ? 'Available' : 'Failed',
+      labelError: result.labelError,
+      invoiceError: result.invoiceError,
+      orderId: order.orderId,
+      trackingId: order.ekartTrackingId
+    });
+  } catch (error) {
+    console.error('❌ Admin download all error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to download documents',
+      error: error.message
+    });
+  }
+});
+
 // ========== DOWNLOAD LABEL - ADMIN (BULK) ========== 
 router.post('/admin/labels/bulk', protectAdmin, async (req, res) => {
   try {
@@ -1120,6 +1319,86 @@ router.post('/admin/labels/bulk', protectAdmin, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to download labels',
+      error: error.message
+    });
+  }
+});
+
+// ========== DOWNLOAD INVOICE - ADMIN (BULK) ========== 
+router.post('/admin/invoices/bulk', protectAdmin, async (req, res) => {
+  try {
+    const { orderIds, trackingIds } = req.body;
+    
+    console.log('\n🧾 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('📦 ADMIN BULK DOWNLOADING INVOICES');
+    console.log('📊 Order IDs:', orderIds);
+    console.log('📊 Tracking IDs:', trackingIds);
+    console.log('👤 Admin:', req.admin.email);
+    
+    let finalTrackingIds = [];
+    
+    if (trackingIds && Array.isArray(trackingIds) && trackingIds.length > 0) {
+      finalTrackingIds = trackingIds;
+    } 
+    else if (orderIds && Array.isArray(orderIds) && orderIds.length > 0) {
+      const orders = await Order.find({ orderId: { $in: orderIds } });
+      
+      if (orders.length === 0) {
+        return res.status(404).json({ message: 'No orders found' });
+      }
+      
+      finalTrackingIds = orders
+        .filter(order => order.ekartTrackingId)
+        .map(order => order.ekartTrackingId);
+      
+      if (finalTrackingIds.length === 0) {
+        return res.status(400).json({ 
+          message: 'None of the selected orders have tracking IDs',
+          orderIds: orderIds
+        });
+      }
+    } else {
+      return res.status(400).json({ 
+        message: 'Please provide either orderIds or trackingIds array'
+      });
+    }
+
+    if (finalTrackingIds.length > 100) {
+      return res.status(400).json({ 
+        message: 'Maximum 100 invoices can be downloaded at once',
+        count: finalTrackingIds.length
+      });
+    }
+
+    const result = await EkartService.downloadInvoice(finalTrackingIds);
+
+    if (!result.success) {
+      return res.status(500).json({
+        message: 'Failed to download invoices from Ekart',
+        error: result.message
+      });
+    }
+
+    if (result.type === 'pdf') {
+      res.setHeader('Content-Type', result.contentType);
+      res.setHeader('Content-Disposition', `attachment; filename="invoices_bulk_${Date.now()}.pdf"`);
+      
+      console.log(`✅ Bulk invoices PDF sent (${finalTrackingIds.length} invoices)`);
+      return res.send(result.data);
+    } else {
+      return res.json({
+        success: true,
+        message: 'Invoices data fetched successfully',
+        data: result.data,
+        count: finalTrackingIds.length,
+        trackingIds: finalTrackingIds
+      });
+    }
+  } catch (error) {
+    console.error('❌ Admin bulk invoice download error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to download invoices',
       error: error.message
     });
   }
