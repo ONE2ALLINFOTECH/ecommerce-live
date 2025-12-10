@@ -1,3 +1,4 @@
+// components/AdminOrders.js - 100% COMPLETE FIXED CODE
 import React, { useEffect, useState } from 'react';
 import { 
   Package, 
@@ -18,7 +19,13 @@ import {
   Tag,
   Calendar,
   ShoppingBag,
-  MessageSquare
+  MessageSquare,
+  FileText,
+  Printer,
+  FileDown,
+  CheckCircle,
+  AlertTriangle,
+  Info
 } from 'lucide-react';
 import API from '../services/api';
 
@@ -35,6 +42,12 @@ const AdminOrders = () => {
   const [creatingShipment, setCreatingShipment] = useState(null);
   const [notes, setNotes] = useState('');
   const [addingNote, setAddingNote] = useState(false);
+  const [downloadingLabel, setDownloadingLabel] = useState(null);
+  const [downloadingBulk, setDownloadingBulk] = useState(false);
+  const [downloadingManifest, setDownloadingManifest] = useState(false);
+  const [showBulkOptions, setShowBulkOptions] = useState(false);
+  const [bulkActionType, setBulkActionType] = useState('labels');
+  const [notification, setNotification] = useState(null);
 
   const statusOptions = [
     'ALL', 'Canceled', 'Open', 'Ready To Ship', 
@@ -44,6 +57,11 @@ const AdminOrders = () => {
   useEffect(() => {
     fetchOrders();
   }, []);
+
+  const showNotification = (message, type = 'success') => {
+    setNotification({ message, type });
+    setTimeout(() => setNotification(null), 3000);
+  };
 
   const fetchOrders = async () => {
     try {
@@ -107,7 +125,7 @@ const AdminOrders = () => {
     } catch (error) {
       console.error('❌ Failed to fetch orders:', error);
       console.error('Error response:', error.response?.data);
-      alert('Failed to load orders: ' + (error.response?.data?.message || error.message));
+      showNotification('Failed to load orders: ' + (error.response?.data?.message || error.message), 'error');
     } finally {
       setLoading(false);
     }
@@ -165,14 +183,14 @@ const AdminOrders = () => {
       const { data } = await API.put(`/orders/admin/cancel/${orderId}`);
       
       if (data.success) {
-        alert('Order cancelled successfully!');
+        showNotification(`Order ${orderId} cancelled successfully!`, 'success');
         fetchOrders();
       } else {
-        alert(data.message || 'Failed to cancel order');
+        showNotification(data.message || 'Failed to cancel order', 'error');
       }
     } catch (error) {
       console.error('Cancel error:', error);
-      alert(error.response?.data?.message || 'Failed to cancel order');
+      showNotification(error.response?.data?.message || 'Failed to cancel order', 'error');
     } finally {
       setCancellingOrder(null);
     }
@@ -201,10 +219,10 @@ const AdminOrders = () => {
     setCreatingShipment(orderId);
     try {
       const { data } = await API.post(`/orders/admin/create-shipment/${orderId}`);
-      alert(`Shipment created!\nTracking ID: ${data.trackingId}`);
+      showNotification(`Shipment created! Tracking ID: ${data.trackingId}`, 'success');
       fetchOrders();
     } catch (error) {
-      alert(error.response?.data?.message || 'Failed to create shipment');
+      showNotification(error.response?.data?.message || 'Failed to create shipment', 'error');
     } finally {
       setCreatingShipment(null);
     }
@@ -228,19 +246,18 @@ const AdminOrders = () => {
 
   const addNoteToOrder = async () => {
     if (!notes.trim()) {
-      alert('Please enter a note');
+      showNotification('Please enter a note', 'error');
       return;
     }
     
     setAddingNote(true);
     try {
-      // You need to implement this API endpoint
       const { data } = await API.post(`/orders/admin/add-note/${selectedOrder.orderId}`, {
         notes: notes
       });
       
       if (data.success) {
-        alert('Note added successfully!');
+        showNotification('Note added successfully!', 'success');
         setSelectedOrder({
           ...selectedOrder,
           notes: notes
@@ -248,7 +265,7 @@ const AdminOrders = () => {
       }
     } catch (error) {
       console.error('Failed to add note:', error);
-      alert('Failed to add note');
+      showNotification('Failed to add note', 'error');
     } finally {
       setAddingNote(false);
     }
@@ -265,12 +282,145 @@ const AdminOrders = () => {
       await API.put(`/orders/admin/update-status/${orderId}`, { 
         orderStatus: newStatus.toLowerCase() 
       });
-      alert('Order status updated successfully!');
+      showNotification('Order status updated successfully!', 'success');
       fetchOrders();
     } catch (error) {
       console.error('Failed to update order status:', error);
-      alert('Failed to update order status');
+      showNotification('Failed to update order status', 'error');
     }
+  };
+
+  // ========== DOWNLOAD SINGLE LABEL ==========
+  const downloadLabel = async (order) => {
+    if (!order.ekartTrackingId) {
+      showNotification('No tracking ID available for this order', 'error');
+      return;
+    }
+
+    setDownloadingLabel(order.orderId);
+    try {
+      const response = await API.get(`/orders/admin/label/${order.orderId}`, {
+        responseType: 'blob'
+      });
+
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `label_${order.ekartTrackingId}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(link);
+      
+      console.log('✅ Label downloaded:', order.ekartTrackingId);
+      showNotification(`Label downloaded for order ${order.orderId}`, 'success');
+    } catch (error) {
+      console.error('❌ Label download failed:', error);
+      showNotification('Failed to download label: ' + (error.response?.data?.message || error.message), 'error');
+    } finally {
+      setDownloadingLabel(null);
+    }
+  };
+
+  // ========== DOWNLOAD BULK LABELS ==========
+  const downloadBulkLabels = async () => {
+    if (selectedOrders.length === 0) {
+      showNotification('Please select orders to download labels', 'error');
+      return;
+    }
+
+    const selectedOrderIds = selectedOrders.map(id => 
+      orders.find(order => order._id === id)?.orderId
+    ).filter(Boolean);
+
+    if (selectedOrderIds.length === 0) {
+      showNotification('No valid orders selected', 'error');
+      return;
+    }
+
+    if (!confirm(`Download labels for ${selectedOrderIds.length} selected orders?`)) {
+      return;
+    }
+
+    setDownloadingBulk(true);
+    try {
+      const response = await API.post('/orders/admin/labels/bulk', {
+        orderIds: selectedOrderIds
+      }, {
+        responseType: 'blob'
+      });
+
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `labels_bulk_${Date.now()}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(link);
+      
+      console.log(`✅ Bulk labels downloaded (${selectedOrderIds.length} orders)`);
+      showNotification(`Downloaded ${selectedOrderIds.length} labels`, 'success');
+    } catch (error) {
+      console.error('❌ Bulk label download failed:', error);
+      showNotification('Failed to download bulk labels: ' + (error.response?.data?.message || error.message), 'error');
+    } finally {
+      setDownloadingBulk(false);
+    }
+  };
+
+  // ========== DOWNLOAD MANIFEST ==========
+  const downloadManifest = async () => {
+    if (selectedOrders.length === 0) {
+      showNotification('Please select orders to download manifest', 'error');
+      return;
+    }
+
+    const selectedOrderIds = selectedOrders.map(id => 
+      orders.find(order => order._id === id)?.orderId
+    ).filter(Boolean);
+
+    if (selectedOrderIds.length === 0) {
+      showNotification('No valid orders selected', 'error');
+      return;
+    }
+
+    setDownloadingManifest(true);
+    try {
+      const response = await API.post('/orders/admin/manifest/bulk', {
+        orderIds: selectedOrderIds
+      });
+
+      if (response.data.success && response.data.manifestUrl) {
+        window.open(response.data.manifestUrl, '_blank');
+        console.log('✅ Manifest opened:', response.data.manifestUrl);
+        showNotification('Manifest opened in new tab', 'success');
+      } else {
+        showNotification('Manifest URL not received from server', 'error');
+      }
+    } catch (error) {
+      console.error('❌ Manifest download failed:', error);
+      showNotification('Failed to download manifest: ' + (error.response?.data?.message || error.message), 'error');
+    } finally {
+      setDownloadingManifest(false);
+    }
+  };
+
+  // ========== BULK ACTIONS ==========
+  const handleBulkAction = () => {
+    if (selectedOrders.length === 0) {
+      showNotification('Please select orders first', 'error');
+      return;
+    }
+
+    if (bulkActionType === 'labels') {
+      downloadBulkLabels();
+    } else if (bulkActionType === 'manifest') {
+      downloadManifest();
+    }
+    setShowBulkOptions(false);
   };
 
   if (loading) {
@@ -285,8 +435,25 @@ const AdminOrders = () => {
   }
 
   return (
-    <div className="container mx-auto px-4 py-6">
-      {/* Header exactly like Ekart screenshot */}
+    <div className="container mx-auto px-4 py-6 relative">
+      {/* Notification */}
+      {notification && (
+        <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg flex items-center space-x-3 ${
+          notification.type === 'success' ? 'bg-green-100 text-green-800 border border-green-200' :
+          notification.type === 'error' ? 'bg-red-100 text-red-800 border border-red-200' :
+          'bg-blue-100 text-blue-800 border border-blue-200'
+        }`}>
+          {notification.type === 'success' ? <CheckCircle className="w-5 h-5" /> :
+           notification.type === 'error' ? <AlertTriangle className="w-5 h-5" /> :
+           <Info className="w-5 h-5" />}
+          <span className="font-medium">{notification.message}</span>
+          <button onClick={() => setNotification(null)} className="ml-4 text-gray-500 hover:text-gray-700">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* Header */}
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-800">eXart</h1>
         
@@ -323,6 +490,98 @@ const AdminOrders = () => {
         </div>
       </div>
 
+      {/* Bulk Actions Bar */}
+      {selectedOrders.length > 0 && (
+        <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <div className="flex items-center">
+                <CheckCircle className="w-5 h-5 text-blue-600 mr-2" />
+                <span className="font-medium text-blue-800">
+                  {selectedOrders.length} orders selected
+                </span>
+              </div>
+              
+              <button
+                onClick={() => setShowBulkOptions(!showBulkOptions)}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center"
+              >
+                <Download className="w-4 h-4 mr-2" />
+                Bulk Actions
+                {showBulkOptions ? ' ↑' : ' ↓'}
+              </button>
+            </div>
+            
+            <button
+              onClick={() => setSelectedOrders([])}
+              className="text-gray-600 hover:text-gray-800"
+            >
+              Clear selection
+            </button>
+          </div>
+          
+          {showBulkOptions && (
+            <div className="mt-4 p-4 bg-white border rounded-lg">
+              <h3 className="font-medium mb-3">Select Bulk Action:</h3>
+              <div className="flex space-x-4">
+                <div className="flex items-center">
+                  <input
+                    type="radio"
+                    id="bulk-labels"
+                    name="bulk-action"
+                    value="labels"
+                    checked={bulkActionType === 'labels'}
+                    onChange={(e) => setBulkActionType(e.target.value)}
+                    className="mr-2"
+                  />
+                  <label htmlFor="bulk-labels" className="flex items-center">
+                    <FileDown className="w-4 h-4 mr-2" />
+                    Download Labels (PDF)
+                  </label>
+                </div>
+                
+                <div className="flex items-center">
+                  <input
+                    type="radio"
+                    id="bulk-manifest"
+                    name="bulk-action"
+                    value="manifest"
+                    checked={bulkActionType === 'manifest'}
+                    onChange={(e) => setBulkActionType(e.target.value)}
+                    className="mr-2"
+                  />
+                  <label htmlFor="bulk-manifest" className="flex items-center">
+                    <FileText className="w-4 h-4 mr-2" />
+                    Download Manifest
+                  </label>
+                </div>
+              </div>
+              
+              <div className="mt-4 flex justify-end">
+                <button
+                  onClick={handleBulkAction}
+                  disabled={downloadingBulk || downloadingManifest}
+                  className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center"
+                >
+                  {(downloadingBulk || downloadingManifest) ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                      Processing...
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-4 h-4 mr-2" />
+                      Execute Bulk Action
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Search and Actions */}
       <div className="flex justify-between items-center mb-4">
         <div className="flex items-center space-x-4">
           <div className="flex items-center bg-white border rounded-lg px-3 py-2">
@@ -330,7 +589,7 @@ const AdminOrders = () => {
             <input
               type="text"
               placeholder="Search orders..."
-              className="ml-2 outline-none"
+              className="ml-2 outline-none w-64"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
@@ -343,11 +602,6 @@ const AdminOrders = () => {
         </div>
         
         <div className="flex items-center space-x-3">
-          {selectedOrders.length > 0 && (
-            <span className="text-sm text-gray-600">
-              {selectedOrders.length} selected
-            </span>
-          )}
           <button 
             onClick={fetchOrders}
             className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
@@ -362,6 +616,7 @@ const AdminOrders = () => {
         </div>
       </div>
 
+      {/* Orders Table */}
       <div className="bg-white rounded-lg border overflow-hidden">
         <div className="overflow-x-auto">
           <table className="min-w-full">
@@ -494,21 +749,42 @@ const AdminOrders = () => {
                   </td>
                   
                   <td className="px-6 py-4">
-                    <div className="flex items-center space-x-2">
+                    <div className="flex flex-wrap gap-2">
                       <button
                         onClick={() => viewOrderDetails(order)}
-                        className="text-blue-600 hover:text-blue-800 text-sm"
+                        className="text-blue-600 hover:text-blue-800 text-sm flex items-center"
                       >
-                        View / Add Notes
+                        <Eye className="w-3 h-3 mr-1" />
+                        View
                       </button>
+                      
+                      {order.ekartTrackingId && (
+                        <button
+                          onClick={() => downloadLabel(order)}
+                          disabled={downloadingLabel === order.orderId}
+                          className="text-green-600 hover:text-green-800 text-sm flex items-center"
+                        >
+                          {downloadingLabel === order.orderId ? (
+                            <>
+                              <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-green-600 mr-1"></div>
+                              ...
+                            </>
+                          ) : (
+                            <>
+                              <Download className="w-3 h-3 mr-1" />
+                              Label
+                            </>
+                          )}
+                        </button>
+                      )}
                       
                       {order.ekartStatus === 'Ready To Ship' && !order.ekartTrackingId && (
                         <button
                           onClick={() => createShipment(order.orderId)}
                           disabled={creatingShipment === order.orderId}
-                          className="text-green-600 hover:text-green-800 text-sm ml-2"
+                          className="text-green-600 hover:text-green-800 text-sm"
                         >
-                          {creatingShipment === order.orderId ? 'Creating...' : 'Create Shipment'}
+                          {creatingShipment === order.orderId ? 'Creating...' : 'Ship'}
                         </button>
                       )}
                       
@@ -516,7 +792,7 @@ const AdminOrders = () => {
                         <button
                           onClick={() => cancelOrder(order.orderId)}
                           disabled={cancellingOrder === order.orderId}
-                          className="text-red-600 hover:text-red-800 text-sm ml-2"
+                          className="text-red-600 hover:text-red-800 text-sm"
                         >
                           {cancellingOrder === order.orderId ? 'Cancelling...' : 'Cancel'}
                         </button>
@@ -527,7 +803,7 @@ const AdminOrders = () => {
                           href={`https://app.elite.ekartlogistics.in/track/${order.ekartTrackingId}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-purple-600 hover:text-purple-800 text-sm ml-2 flex items-center"
+                          className="text-purple-600 hover:text-purple-800 text-sm flex items-center"
                         >
                           <Truck className="w-3 h-3 mr-1" />
                           Track
@@ -564,7 +840,7 @@ const AdminOrders = () => {
         </div>
       </div>
 
-      {/* COMPLETE MODAL - NO MISSING PARTS */}
+      {/* Order Details Modal */}
       {selectedOrder && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg max-w-5xl w-full max-h-[90vh] overflow-y-auto">
@@ -594,7 +870,6 @@ const AdminOrders = () => {
             <div className="p-6 space-y-6">
               {/* Order Summary Cards */}
               <div className="grid grid-cols-3 gap-6">
-                {/* Order Info */}
                 <div className="border rounded-lg p-4">
                   <h3 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
                     <Package className="w-5 h-5 text-blue-600" />
@@ -624,7 +899,6 @@ const AdminOrders = () => {
                   </div>
                 </div>
 
-                {/* Customer Info */}
                 <div className="border rounded-lg p-4">
                   <h3 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
                     <User className="w-5 h-5 text-green-600" />
@@ -652,7 +926,6 @@ const AdminOrders = () => {
                   </div>
                 </div>
 
-                {/* Shipping Info */}
                 <div className="border rounded-lg p-4">
                   <h3 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
                     <MapPin className="w-5 h-5 text-red-600" />
@@ -737,27 +1010,62 @@ const AdminOrders = () => {
               {/* Ekart Tracking Section */}
               {selectedOrder.ekartTrackingId && (
                 <div className="border rounded-lg p-4 bg-blue-50">
-                  <h3 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
-                    <Truck className="w-5 h-5 text-blue-600" />
-                    Ekart Shipment Details
-                  </h3>
+                  <div className="flex justify-between items-start mb-4">
+                    <h3 className="font-semibold text-gray-700 flex items-center gap-2">
+                      <Truck className="w-5 h-5 text-blue-600" />
+                      Ekart Shipment Details
+                    </h3>
+                    
+                    <button
+                      onClick={() => downloadLabel(selectedOrder)}
+                      disabled={downloadingLabel === selectedOrder.orderId}
+                      className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      {downloadingLabel === selectedOrder.orderId ? (
+                        <>
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                          Downloading...
+                        </>
+                      ) : (
+                        <>
+                          <Download className="w-4 h-4" />
+                          Download Label
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  
                   <div className="grid grid-cols-2 gap-4 text-sm mb-4">
                     <div>
                       <span className="text-gray-600">Tracking ID:</span>
-                      <div className="font-mono mt-1">{selectedOrder.ekartTrackingId}</div>
+                      <div className="font-mono mt-1 bg-white p-2 rounded border">{selectedOrder.ekartTrackingId}</div>
                     </div>
                     {selectedOrder.ekartAWB && (
                       <div>
                         <span className="text-gray-600">AWB Number:</span>
-                        <div className="font-mono mt-1">{selectedOrder.ekartAWB}</div>
+                        <div className="font-mono mt-1 bg-white p-2 rounded border">{selectedOrder.ekartAWB}</div>
                       </div>
                     )}
                     <div>
                       <span className="text-gray-600">Expected Delivery:</span>
-                      <div className="mt-1">
+                      <div className="mt-1 bg-white p-2 rounded border">
                         {selectedOrder.expectedDelivery 
                           ? new Date(selectedOrder.expectedDelivery).toLocaleDateString()
                           : 'Not set'}
+                      </div>
+                    </div>
+                    <div>
+                      <span className="text-gray-600">Public Tracking:</span>
+                      <div className="mt-1">
+                        <a
+                          href={`https://app.elite.ekartlogistics.in/track/${selectedOrder.ekartTrackingId}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                          Open in Ekart Portal
+                        </a>
                       </div>
                     </div>
                   </div>
@@ -799,17 +1107,6 @@ const AdminOrders = () => {
                     <div className="text-center py-4 text-gray-600">
                       No tracking updates yet
                     </div>
-                  )}
-
-                  {selectedOrder.publicTrackingUrl && (
-                    <a
-                      href={selectedOrder.publicTrackingUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="mt-4 inline-flex items-center gap-2 text-blue-600 hover:text-blue-800 transition-colors"
-                    >
-                      Track on Ekart Portal <ExternalLink className="w-4 h-4" />
-                    </a>
                   )}
                 </div>
               )}
@@ -920,6 +1217,26 @@ const AdminOrders = () => {
                         <>
                           <Truck className="w-4 h-4" />
                           Create Shipment
+                        </>
+                      )}
+                    </button>
+                  )}
+                  
+                  {selectedOrder.ekartTrackingId && (
+                    <button
+                      onClick={() => downloadLabel(selectedOrder)}
+                      disabled={downloadingLabel === selectedOrder.orderId}
+                      className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
+                    >
+                      {downloadingLabel === selectedOrder.orderId ? (
+                        <>
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                          Downloading...
+                        </>
+                      ) : (
+                        <>
+                          <Download className="w-4 h-4" />
+                          Download Label
                         </>
                       )}
                     </button>

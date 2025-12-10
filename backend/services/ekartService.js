@@ -1,4 +1,4 @@
-// services/ekartService.js - COMPLETE FIXED VERSION WITH PROPER CANCELLATION
+// services/ekartService.js - 100% COMPLETE FIXED CODE
 const axios = require('axios');
 
 class EkartService {
@@ -75,6 +75,187 @@ class EkartService {
       'Content-Type': 'application/json',
       Accept: 'application/json'
     };
+  }
+
+  // ================== LABEL DOWNLOAD ==================
+  async downloadLabels(trackingIds, jsonOnly = false) {
+    try {
+      console.log('\n🏷️ ====== EKART: DOWNLOAD LABELS START ======');
+      console.log('🔖 Tracking IDs:', trackingIds);
+      console.log('📊 JSON Only:', jsonOnly);
+      
+      if (!Array.isArray(trackingIds) || trackingIds.length === 0) {
+        throw new Error('Tracking IDs array is required');
+      }
+
+      if (trackingIds.length > 100) {
+        throw new Error('Maximum 100 labels can be downloaded at once');
+      }
+
+      const headers = await this.createHeaders();
+      
+      const payload = {
+        ids: trackingIds
+      };
+
+      const params = {};
+      if (jsonOnly) {
+        params.json_only = true;
+      }
+
+      const labelURL = `${this.baseURL}/api/v1/package/label`;
+      console.log('🌐 Label URL:', labelURL);
+      console.log('📦 Payload:', JSON.stringify(payload, null, 2));
+
+      const response = await axios.post(labelURL, payload, {
+        headers,
+        params,
+        timeout: 60000,
+        responseType: jsonOnly ? 'json' : 'arraybuffer',
+        validateStatus: (status) => status >= 200 && status < 500
+      });
+
+      console.log('📡 Response Status:', response.status);
+      console.log('📡 Content-Type:', response.headers['content-type']);
+
+      if (response.status >= 200 && response.status < 300) {
+        if (jsonOnly) {
+          console.log('✅ Labels JSON data fetched successfully');
+          return {
+            success: true,
+            type: 'json',
+            data: response.data,
+            message: 'Labels data fetched successfully'
+          };
+        } else {
+          console.log('✅ Labels PDF fetched successfully');
+          console.log('📄 PDF Size:', response.data.length, 'bytes');
+          
+          return {
+            success: true,
+            type: 'pdf',
+            data: response.data,
+            contentType: response.headers['content-type'] || 'application/pdf',
+            message: 'Labels PDF fetched successfully'
+          };
+        }
+      }
+
+      let errorMessage = 'Failed to download labels';
+      try {
+        const errorData = JSON.parse(response.data.toString());
+        errorMessage = errorData.message || errorData.description || errorMessage;
+      } catch (e) {
+        errorMessage = `API error: ${response.status}`;
+      }
+
+      console.error('❌ Label download failed:', errorMessage);
+      throw new Error(errorMessage);
+
+    } catch (error) {
+      console.error('\n❌❌❌ LABEL DOWNLOAD FAILED');
+      console.error('Error:', error.message);
+      
+      if (error.response) {
+        console.error('Status:', error.response.status);
+        console.error('Headers:', error.response.headers);
+        
+        if (error.response.data && Buffer.isBuffer(error.response.data)) {
+          try {
+            const errorData = JSON.parse(error.response.data.toString());
+            console.error('Error Data:', errorData);
+          } catch (e) {
+            console.error('Raw Error Data (first 200 chars):', 
+              error.response.data.toString().substring(0, 200));
+          }
+        }
+      }
+      
+      console.error('====================================\n');
+      
+      throw new Error(
+        `Label download failed: ${
+          error.response?.data?.description || 
+          error.response?.data?.message || 
+          error.message
+        }`
+      );
+    }
+  }
+
+  // ================== MANIFEST DOWNLOAD ==================
+  async downloadManifest(trackingIds) {
+    try {
+      console.log('\n📋 ====== EKART: DOWNLOAD MANIFEST START ======');
+      console.log('🔖 Tracking IDs:', trackingIds);
+      
+      if (!Array.isArray(trackingIds) || trackingIds.length === 0) {
+        throw new Error('Tracking IDs array is required');
+      }
+
+      if (trackingIds.length > 100) {
+        throw new Error('Maximum 100 manifests can be downloaded at once');
+      }
+
+      const headers = await this.createHeaders();
+      
+      const payload = {
+        ids: trackingIds
+      };
+
+      const manifestURL = `${this.baseURL}/data/v2/generate/manifest`;
+      console.log('🌐 Manifest URL:', manifestURL);
+      console.log('📦 Payload:', JSON.stringify(payload, null, 2));
+
+      const response = await axios.post(manifestURL, payload, {
+        headers,
+        timeout: 60000,
+        validateStatus: (status) => status >= 200 && status < 500
+      });
+
+      console.log('📡 Response Status:', response.status);
+      console.log('📡 Response Data:', JSON.stringify(response.data, null, 2));
+
+      if (response.status >= 200 && response.status < 300 && response.data) {
+        const manifestUrl = response.data.manifestDownloadUrl;
+        if (manifestUrl) {
+          console.log('✅ Manifest URL generated successfully');
+          return {
+            success: true,
+            manifestUrl: manifestUrl,
+            manifestNumber: response.data.manifestNumber,
+            message: 'Manifest URL generated successfully'
+          };
+        }
+      }
+
+      const errorMsg = response.data?.message || 
+                      response.data?.description || 
+                      response.data?.remark || 
+                      `API error: ${response.status}`;
+
+      console.error('❌ Manifest download failed:', errorMsg);
+      throw new Error(errorMsg);
+
+    } catch (error) {
+      console.error('\n❌❌❌ MANIFEST DOWNLOAD FAILED');
+      console.error('Error:', error.message);
+      
+      if (error.response) {
+        console.error('Status:', error.response.status);
+        console.error('Response:', JSON.stringify(error.response.data, null, 2));
+      }
+      
+      console.error('====================================\n');
+
+      throw new Error(
+        `Manifest download failed: ${
+          error.response?.data?.description || 
+          error.response?.data?.message || 
+          error.message
+        }`
+      );
+    }
   }
 
   // ================== HELPERS ==================
@@ -243,7 +424,7 @@ class EkartService {
     }
   }
 
-  // ================== ✅ FIXED: CANCEL SHIPMENT - COMPLETE FIX ==================
+  // ================== CANCEL SHIPMENT ==================
   async cancelShipment(trackingId) {
     try {
       console.log('\n🗑️ ====== EKART: CANCEL SHIPMENT START ======');
@@ -251,20 +432,18 @@ class EkartService {
       
       const headers = await this.createHeaders();
 
-      // ✅ CORRECT: DELETE method with query parameter
       const cancelURL = `${this.baseURL}/api/v1/package/cancel?tracking_id=${trackingId}`;
       console.log('🌐 Cancel URL:', cancelURL);
 
       const response = await axios.delete(cancelURL, {
         headers,
         timeout: 30000,
-        validateStatus: (status) => true // Accept all status codes to handle them manually
+        validateStatus: (status) => true
       });
 
       console.log('📡 Response Status:', response.status);
       console.log('📡 Response Data:', JSON.stringify(response.data, null, 2));
 
-      // ✅ Handle 200 OK with status: true
       if (response.status === 200) {
         if (response.data.status === true || response.data.status === 'true') {
           const message = response.data.remark || 'Shipment cancelled successfully on Ekart';
@@ -282,7 +461,6 @@ class EkartService {
           };
         }
         
-        // Handle 200 with status: false (partial cancellation)
         if (response.data.status === false || response.data.status === 'false') {
           const errorMsg = response.data.remark || 'Partial cancellation - Shipment might still appear in Ready to Ship';
           
@@ -299,7 +477,6 @@ class EkartService {
         }
       }
 
-      // ✅ Handle 404 - Shipment not found (already cancelled or doesn't exist)
       if (response.status === 404) {
         console.warn('⚠️ Shipment not found - Already cancelled or does not exist');
         console.log('🗑️ ====================================\n');
@@ -312,7 +489,6 @@ class EkartService {
         };
       }
 
-      // ✅ Handle 400 Bad Request
       if (response.status === 400) {
         const errorMsg = response.data?.message || 
                         response.data?.description ||
@@ -330,7 +506,6 @@ class EkartService {
         };
       }
 
-      // ✅ Handle 500 Internal Server Error
       if (response.status >= 500) {
         const errorMsg = response.data?.message || 
                         response.data?.description ||
@@ -348,7 +523,6 @@ class EkartService {
         };
       }
 
-      // ✅ Handle unexpected response
       const errorMsg = response.data?.message || 
                       response.data?.remark || 
                       response.data?.description ||
@@ -372,7 +546,6 @@ class EkartService {
         console.error('Status:', error.response.status);
         console.error('Response:', JSON.stringify(error.response.data, null, 2));
         
-        // ✅ Handle 404 in catch block
         if (error.response.status === 404) {
           return {
             success: true,
@@ -382,7 +555,6 @@ class EkartService {
           };
         }
         
-        // ✅ Handle 400 in catch block
         if (error.response.status === 400) {
           const errorMsg = error.response.data?.message || 
                           error.response.data?.description ||
@@ -400,7 +572,6 @@ class EkartService {
       
       console.error('🗑️ ====================================\n');
 
-      // ✅ Network or other errors
       return {
         success: false,
         tracking_id: trackingId,

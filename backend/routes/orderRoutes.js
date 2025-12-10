@@ -1,4 +1,4 @@
-// routes/orderRoutes.js - COMPLETE FIXED VERSION WITH EKART CANCELLATION
+// routes/orderRoutes.js - 100% COMPLETE FIXED CODE
 const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
@@ -54,7 +54,6 @@ router.post('/create', protectCustomer, async (req, res) => {
     console.log('📍 Pincode:', shippingAddress?.pincode);
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 
-    // Validation
     if (!shippingAddress?.name || !shippingAddress?.mobile || !shippingAddress?.pincode || 
         !shippingAddress?.locality || !shippingAddress?.address || !shippingAddress?.city || 
         !shippingAddress?.state) {
@@ -69,7 +68,6 @@ router.post('/create', protectCustomer, async (req, res) => {
       return res.status(400).json({ message: 'Invalid payment method. Use "online" or "cod"' });
     }
 
-    // Serviceability check
     let serviceabilityCheck = { serviceable: true, warning: null };
     try {
       console.log('📍 Checking Ekart serviceability for pincode:', shippingAddress.pincode);
@@ -87,7 +85,6 @@ router.post('/create', protectCustomer, async (req, res) => {
       serviceabilityCheck.warning = 'Serviceability check unavailable';
     }
 
-    // Get cart
     const cart = await Cart.findOne({ user: userId }).populate(
       'items.productId',
       'enableOnlinePayment enableCashOnDelivery name sellingPrice'
@@ -99,7 +96,6 @@ router.post('/create', protectCustomer, async (req, res) => {
 
     console.log('🛒 Cart items:', cart.items.length);
 
-    // Validate payment method vs product settings
     if (paymentMethod === 'online') {
       const invalid = cart.items.filter(item => !item.productId?.enableOnlinePayment);
       if (invalid.length > 0) {
@@ -118,7 +114,6 @@ router.post('/create', protectCustomer, async (req, res) => {
       }
     }
 
-    // Calculate amounts
     const totalAmount = cart.totalAmount;
     const discount = Math.round(totalAmount * 0.3);
     const shippingCharge = 29;
@@ -126,7 +121,6 @@ router.post('/create', protectCustomer, async (req, res) => {
 
     console.log('💰 Amounts:', { totalAmount, discount, shippingCharge, finalAmount });
 
-    // Order items
     const orderItems = cart.items.map(item => ({
       productId: item.productId._id || item.productId,
       name: item.name,
@@ -136,7 +130,6 @@ router.post('/create', protectCustomer, async (req, res) => {
       totalPrice: item.sellingPrice * item.quantity
     }));
 
-    // Create order
     const orderData = {
       user: userId,
       items: orderItems,
@@ -164,7 +157,6 @@ router.post('/create', protectCustomer, async (req, res) => {
 
     console.log('✅ Order created:', order.orderId);
 
-    // ========== ONLINE PAYMENT ==========
     if (paymentMethod === 'online') {
       try {
         const stripeOrderData = {
@@ -207,12 +199,10 @@ router.post('/create', protectCustomer, async (req, res) => {
       }
     }
 
-    // ========== COD ==========
     order.paymentStatus = 'pending';
     order.orderStatus = 'confirmed';
     await order.save();
 
-    // Create shipment for COD immediately
     try {
       console.log('\n🚚 Creating Ekart shipment for COD order...');
       const ekartResponse = await EkartService.createShipment(
@@ -308,7 +298,6 @@ router.get('/verify-payment/:sessionId', protectCustomer, async (req, res) => {
 
     console.log('🛒 Cart cleared');
 
-    // Create Ekart shipment
     let shipmentCreated = false;
     let trackingId = null;
     let shipmentError = null;
@@ -460,7 +449,7 @@ router.get('/track/:orderId', protectCustomer, async (req, res) => {
   }
 });
 
-// ========== ✅ FIXED: CANCEL ORDER - USER ========== 
+// ========== CANCEL ORDER - USER ========== 
 router.put('/cancel/:orderId', protectCustomer, async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -475,7 +464,6 @@ router.put('/cancel/:orderId', protectCustomer, async (req, res) => {
       return res.status(404).json({ message: 'Order not found' });
     }
 
-    // Check if order can be cancelled
     if (['shipped', 'delivered'].includes(order.orderStatus)) {
       return res.status(400).json({
         message: 'Cannot cancel. Order already shipped/delivered.'
@@ -486,7 +474,6 @@ router.put('/cancel/:orderId', protectCustomer, async (req, res) => {
       return res.status(400).json({ message: 'Order already cancelled' });
     }
 
-    // ✅ EKART CANCELLATION - If shipment exists
     let ekartCancelled = false;
     let ekartCancelError = null;
     let ekartWarning = null;
@@ -508,7 +495,6 @@ router.put('/cancel/:orderId', protectCustomer, async (req, res) => {
           ekartCancelError = cancelResult.message || 'Cancellation failed';
           console.error('❌ Ekart cancellation failed:', ekartCancelError);
           
-          // Return error - don't proceed with cancellation
           return res.status(400).json({
             success: false,
             message: 'Failed to cancel Ekart shipment',
@@ -520,7 +506,6 @@ router.put('/cancel/:orderId', protectCustomer, async (req, res) => {
         ekartCancelError = ekartError.message;
         console.error('❌ Ekart cancel error:', ekartError.message);
         
-        // Return error - don't proceed with cancellation
         return res.status(500).json({
           success: false,
           message: 'Failed to cancel shipment on Ekart',
@@ -532,7 +517,6 @@ router.put('/cancel/:orderId', protectCustomer, async (req, res) => {
       console.log('ℹ️ No Ekart shipment to cancel');
     }
 
-    // Update order status only if Ekart cancellation succeeded or no shipment
     order.orderStatus = 'cancelled';
     order.paymentStatus = order.paymentStatus === 'success' ? 'success' : 'cancelled';
     order.cancellationDate = new Date();
@@ -562,6 +546,61 @@ router.put('/cancel/:orderId', protectCustomer, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to cancel order',
+      error: error.message
+    });
+  }
+});
+
+// ========== DOWNLOAD LABEL - CUSTOMER ========== 
+router.get('/label/:orderId', protectCustomer, async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const userId = req.user._id;
+    
+    console.log('\n🏷️ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('👤 CUSTOMER DOWNLOADING LABEL');
+    console.log('📦 Order ID:', orderId);
+    console.log('👤 User ID:', userId);
+    
+    const order = await Order.findOne({ orderId, user: userId });
+    if (!order) {
+      return res.status(404).json({ message: 'Order not found' });
+    }
+
+    if (!order.ekartTrackingId) {
+      return res.status(400).json({ 
+        message: 'No tracking ID found for this order',
+        orderId: order.orderId
+      });
+    }
+
+    const result = await EkartService.downloadLabels([order.ekartTrackingId]);
+
+    if (!result.success) {
+      return res.status(500).json({
+        message: 'Failed to download label from Ekart',
+        error: result.message
+      });
+    }
+
+    if (result.type === 'pdf') {
+      res.setHeader('Content-Type', result.contentType);
+      res.setHeader('Content-Disposition', `attachment; filename="label_${order.ekartTrackingId}.pdf"`);
+      
+      console.log(`✅ Label PDF sent to customer for order ${orderId}`);
+      return res.send(result.data);
+    } else {
+      return res.json({
+        success: true,
+        message: 'Label data fetched successfully',
+        data: result.data
+      });
+    }
+  } catch (error) {
+    console.error('❌ Customer label download error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to download label',
       error: error.message
     });
   }
@@ -848,7 +887,7 @@ router.post('/admin/create-shipment/:orderId', protectAdmin, async (req, res) =>
   }
 });
 
-// ========== ✅ FIXED: ADMIN CANCEL ORDER WITH EKART ========== 
+// ========== ADMIN CANCEL ORDER ========== 
 router.put('/admin/cancel/:orderId', protectAdmin, async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -863,7 +902,6 @@ router.put('/admin/cancel/:orderId', protectAdmin, async (req, res) => {
       return res.status(404).json({ message: 'Order not found' });
     }
 
-    // Check if order can be cancelled
     if (['shipped', 'delivered'].includes(order.orderStatus)) {
       return res.status(400).json({
         message: 'Cannot cancel. Order already shipped/delivered.'
@@ -874,7 +912,6 @@ router.put('/admin/cancel/:orderId', protectAdmin, async (req, res) => {
       return res.status(400).json({ message: 'Order already cancelled' });
     }
 
-    // ✅ EKART CANCELLATION - If shipment exists
     let ekartCancelled = false;
     let ekartCancelError = null;
     let ekartWarning = null;
@@ -896,7 +933,6 @@ router.put('/admin/cancel/:orderId', protectAdmin, async (req, res) => {
           ekartCancelError = cancelResult.message || 'Cancellation failed';
           console.error('❌ Ekart cancellation failed:', ekartCancelError);
           
-          // Return error - don't proceed with cancellation
           return res.status(400).json({
             success: false,
             message: 'Failed to cancel Ekart shipment',
@@ -908,7 +944,6 @@ router.put('/admin/cancel/:orderId', protectAdmin, async (req, res) => {
         ekartCancelError = ekartError.message;
         console.error('❌ Ekart cancel error:', ekartError.message);
         
-        // Return error - don't proceed with cancellation
         return res.status(500).json({
           success: false,
           message: 'Failed to cancel shipment on Ekart',
@@ -920,7 +955,6 @@ router.put('/admin/cancel/:orderId', protectAdmin, async (req, res) => {
       console.log('ℹ️ No Ekart shipment to cancel');
     }
 
-    // Update order status only if Ekart cancellation succeeded or no shipment
     order.orderStatus = 'cancelled';
     order.paymentStatus = order.paymentStatus === 'success' ? 'success' : 'cancelled';
     order.cancellationDate = new Date();
@@ -951,6 +985,202 @@ router.put('/admin/cancel/:orderId', protectAdmin, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to cancel order',
+      error: error.message
+    });
+  }
+});
+
+// ========== DOWNLOAD LABEL - ADMIN (SINGLE) ========== 
+router.get('/admin/label/:orderId', protectAdmin, async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    
+    console.log('\n🏷️ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('📦 ADMIN DOWNLOADING LABEL FOR ORDER:', orderId);
+    console.log('👤 Admin:', req.admin.email);
+    
+    const order = await Order.findOne({ orderId });
+    if (!order) {
+      return res.status(404).json({ message: 'Order not found' });
+    }
+
+    if (!order.ekartTrackingId) {
+      return res.status(400).json({ 
+        message: 'No tracking ID found for this order',
+        orderId: order.orderId
+      });
+    }
+
+    const result = await EkartService.downloadLabels([order.ekartTrackingId]);
+
+    if (!result.success) {
+      return res.status(500).json({
+        message: 'Failed to download label from Ekart',
+        error: result.message
+      });
+    }
+
+    if (result.type === 'pdf') {
+      res.setHeader('Content-Type', result.contentType);
+      res.setHeader('Content-Disposition', `attachment; filename="label_${order.ekartTrackingId}.pdf"`);
+      
+      console.log(`✅ Label PDF sent for order ${orderId}`);
+      return res.send(result.data);
+    } else {
+      return res.json({
+        success: true,
+        message: 'Label data fetched successfully',
+        data: result.data,
+        orderId: order.orderId,
+        trackingId: order.ekartTrackingId
+      });
+    }
+  } catch (error) {
+    console.error('❌ Admin label download error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to download label',
+      error: error.message
+    });
+  }
+});
+
+// ========== DOWNLOAD LABEL - ADMIN (BULK) ========== 
+router.post('/admin/labels/bulk', protectAdmin, async (req, res) => {
+  try {
+    const { orderIds, trackingIds } = req.body;
+    
+    console.log('\n🏷️ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('📦 ADMIN BULK DOWNLOADING LABELS');
+    console.log('📊 Order IDs:', orderIds);
+    console.log('📊 Tracking IDs:', trackingIds);
+    console.log('👤 Admin:', req.admin.email);
+    
+    let finalTrackingIds = [];
+    
+    if (trackingIds && Array.isArray(trackingIds) && trackingIds.length > 0) {
+      finalTrackingIds = trackingIds;
+    } 
+    else if (orderIds && Array.isArray(orderIds) && orderIds.length > 0) {
+      const orders = await Order.find({ orderId: { $in: orderIds } });
+      
+      if (orders.length === 0) {
+        return res.status(404).json({ message: 'No orders found' });
+      }
+      
+      finalTrackingIds = orders
+        .filter(order => order.ekartTrackingId)
+        .map(order => order.ekartTrackingId);
+      
+      if (finalTrackingIds.length === 0) {
+        return res.status(400).json({ 
+          message: 'None of the selected orders have tracking IDs',
+          orderIds: orderIds
+        });
+      }
+    } else {
+      return res.status(400).json({ 
+        message: 'Please provide either orderIds or trackingIds array'
+      });
+    }
+
+    if (finalTrackingIds.length > 100) {
+      return res.status(400).json({ 
+        message: 'Maximum 100 labels can be downloaded at once',
+        count: finalTrackingIds.length
+      });
+    }
+
+    const result = await EkartService.downloadLabels(finalTrackingIds);
+
+    if (!result.success) {
+      return res.status(500).json({
+        message: 'Failed to download labels from Ekart',
+        error: result.message
+      });
+    }
+
+    if (result.type === 'pdf') {
+      res.setHeader('Content-Type', result.contentType);
+      res.setHeader('Content-Disposition', `attachment; filename="labels_bulk_${Date.now()}.pdf"`);
+      
+      console.log(`✅ Bulk labels PDF sent (${finalTrackingIds.length} labels)`);
+      return res.send(result.data);
+    } else {
+      return res.json({
+        success: true,
+        message: 'Labels data fetched successfully',
+        data: result.data,
+        count: finalTrackingIds.length,
+        trackingIds: finalTrackingIds
+      });
+    }
+  } catch (error) {
+    console.error('❌ Admin bulk label download error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to download labels',
+      error: error.message
+    });
+  }
+});
+
+// ========== DOWNLOAD MANIFEST - ADMIN ========== 
+router.post('/admin/manifest/bulk', protectAdmin, async (req, res) => {
+  try {
+    const { orderIds, trackingIds } = req.body;
+    
+    console.log('\n📋 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('📦 ADMIN DOWNLOADING MANIFEST');
+    console.log('📊 Order IDs:', orderIds);
+    console.log('📊 Tracking IDs:', trackingIds);
+    console.log('👤 Admin:', req.admin.email);
+    
+    let finalTrackingIds = [];
+    
+    if (trackingIds && Array.isArray(trackingIds) && trackingIds.length > 0) {
+      finalTrackingIds = trackingIds;
+    } 
+    else if (orderIds && Array.isArray(orderIds) && orderIds.length > 0) {
+      const orders = await Order.find({ orderId: { $in: orderIds } });
+      
+      finalTrackingIds = orders
+        .filter(order => order.ekartTrackingId)
+        .map(order => order.ekartTrackingId);
+      
+      if (finalTrackingIds.length === 0) {
+        return res.status(400).json({ 
+          message: 'None of the selected orders have tracking IDs'
+        });
+      }
+    } else {
+      return res.status(400).json({ 
+        message: 'Please provide either orderIds or trackingIds array'
+      });
+    }
+
+    const result = await EkartService.downloadManifest(finalTrackingIds);
+
+    if (!result.success) {
+      return res.status(500).json({
+        message: 'Failed to download manifest from Ekart',
+        error: result.message
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Manifest generated successfully',
+      manifestUrl: result.manifestUrl,
+      manifestNumber: result.manifestNumber,
+      count: finalTrackingIds.length,
+      trackingIds: finalTrackingIds
+    });
+  } catch (error) {
+    console.error('❌ Admin manifest download error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to download manifest',
       error: error.message
     });
   }
