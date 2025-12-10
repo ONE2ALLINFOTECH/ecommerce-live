@@ -1,12 +1,12 @@
 // components/AdminOrders.js - 100% COMPLETE CODE WITH INVOICE DOWNLOAD
 import React, { useEffect, useState } from 'react';
-import { 
-  Package, 
-  Truck, 
-  ExternalLink, 
-  RefreshCw, 
-  Eye, 
-  X, 
+import {
+  Package,
+  Truck,
+  ExternalLink,
+  RefreshCw,
+  Eye,
+  X,
   AlertCircle,
   Filter,
   Download,
@@ -33,7 +33,10 @@ import {
   ChevronDown,
   ChevronUp,
   CheckSquare,
-  Square
+  Square,
+  ChevronLeft,
+  ChevronRight,
+  DownloadCloud
 } from 'lucide-react';
 import API from '../services/api';
 
@@ -42,6 +45,7 @@ const AdminOrders = () => {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [dateRange, setDateRange] = useState({ start: '2025-11-10', end: '2025-12-10' });
   const [selectedOrders, setSelectedOrders] = useState([]);
   const [cancellingOrder, setCancellingOrder] = useState(null);
   const [selectedOrder, setSelectedOrder] = useState(null);
@@ -59,15 +63,27 @@ const AdminOrders = () => {
   const [notification, setNotification] = useState(null);
   const [expandedOrders, setExpandedOrders] = useState([]);
   const [viewType, setViewType] = useState('table'); // 'table' or 'card'
-
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(100);
+  const [totalItems, setTotalItems] = useState(0);
+  const [orderSummary, setOrderSummary] = useState({
+    all: 0,
+    cancelled: 0,
+    open: 0,
+    readyToShip: 0,
+    readyForPickup: 0,
+    inTransit: 0,
+    delivered: 0,
+    rto: 0
+  });
   const statusOptions = [
-    'ALL', 'Canceled', 'Open', 'Ready To Ship', 
+    'ALL', 'Canceled', 'Open', 'Ready To Ship',
     'Ready For Pickup', 'In Transit', 'Delivered', 'RTO'
   ];
 
   useEffect(() => {
     fetchOrders();
-  }, []);
+  }, [dateRange]);
 
   const showNotification = (message, type = 'success') => {
     setNotification({ message, type });
@@ -78,11 +94,11 @@ const AdminOrders = () => {
     try {
       setLoading(true);
       const { data } = await API.get('/orders/admin/all');
-      
+     
       console.log('📦 Admin Orders API Response:', data);
-      
+     
       let ordersArray = [];
-      
+     
       if (Array.isArray(data)) {
         ordersArray = data;
       } else if (data.orders && Array.isArray(data.orders)) {
@@ -93,9 +109,9 @@ const AdminOrders = () => {
         console.error('❌ Unexpected response format:', data);
         ordersArray = [];
       }
-      
+     
       console.log(`✅ Fetched ${ordersArray.length} orders`);
-      
+     
       const transformedOrders = ordersArray.map(order => {
         const orderTags = [];
         if (order.ekartTrackingId) {
@@ -106,33 +122,45 @@ const AdminOrders = () => {
         } else {
           orderTags.push('Prepaid');
         }
-        
-        const productNames = order.items.map(item => 
+       
+        const productNames = order.items.map(item =>
           item.productId?.name || item.name || 'Product'
         );
-        
+       
         const mainProduct = productNames[0] || 'Product';
-        const truncatedProduct = mainProduct.length > 25 
-          ? mainProduct.substring(0, 25) + '...' 
+        const truncatedProduct = mainProduct.length > 25
+          ? mainProduct.substring(0, 25) + '...'
           : mainProduct;
-        
+       
         return {
           ...order,
           channel: 'eXart',
           lastUpdated: order.updatedAt || order.createdAt,
           displayItems: `${truncatedProduct} Quantity: ${order.items.reduce((sum, item) => sum + (item.quantity || 1), 0)}`,
-          shippingDisplay: `${order.shippingAddress?.name || 'Customer'} ${order.shippingAddress?.mobile || ''}`.trim(),
-          paymentDisplay: order.paymentMethod === 'cod' 
-            ? `COD ₹${order.finalAmount || 0}` 
-            : `Prepaid ₹${order.finalAmount || 0}`,
-          orderTags: [...orderTags, order.shippingAddress?.city || 'Location'],
+          shippingDisplay: `${order.shippingAddress?.name || 'Customer'} ${order.shippingAddress?.mobile || ''} ${order.shippingAddress?.city || ''}, ${order.shippingAddress?.state || ''} ${order.shippingAddress?.pincode || ''}`,
+          paymentDisplay: `${order.paymentMethod === 'cod' ? 'COD' : 'Prepaid'} ₹${order.finalAmount || 0}`,
+          orderTags: [...orderTags, ...(order.shippingAddress?.city ? [order.shippingAddress.city] : []), 'Manual Shipment', 'Repeat Customer', 'Label Generated'],
           ekartStatus: mapToEkartStatus(order.orderStatus),
           displayOrderId: order.orderId || order._id
         };
       });
-      
+     
+      // Calculate summary
+      const summary = {
+        all: transformedOrders.length,
+        cancelled: transformedOrders.filter(o => o.ekartStatus === 'Canceled').length,
+        open: transformedOrders.filter(o => o.ekartStatus === 'Open').length,
+        readyToShip: transformedOrders.filter(o => o.ekartStatus === 'Ready To Ship').length,
+        readyForPickup: transformedOrders.filter(o => o.ekartStatus === 'Ready For Pickup').length,
+        inTransit: transformedOrders.filter(o => o.ekartStatus === 'In Transit').length,
+        delivered: transformedOrders.filter(o => o.ekartStatus === 'Delivered').length,
+        rto: transformedOrders.filter(o => o.ekartStatus === 'RTO').length
+      };
+      setOrderSummary(summary);
+      setTotalItems(transformedOrders.length);
+     
       setOrders(transformedOrders);
-      
+     
     } catch (error) {
       console.error('❌ Failed to fetch orders:', error);
       console.error('Error response:', error.response?.data);
@@ -172,27 +200,52 @@ const AdminOrders = () => {
     }
   };
 
+  const getTagColor = (tag) => {
+    switch(tag.toLowerCase()) {
+      case 'manual shipment':
+        return 'bg-green-100 text-green-800 border-green-200';
+      case 'repeat customer':
+        return 'bg-green-100 text-green-800 border-green-200';
+      case 'label generated':
+        return 'bg-blue-100 text-blue-800 border-blue-200';
+      case 'invoice generated':
+        return 'bg-purple-100 text-purple-800 border-purple-200';
+      default:
+        return 'bg-gray-100 text-gray-800 border-gray-200';
+    }
+  };
+
   const filteredOrders = orders.filter(order => {
-    const matchesSearch = searchTerm === '' || 
+    const createdDate = new Date(order.createdAt);
+    const startDate = new Date(dateRange.start);
+    const endDate = new Date(dateRange.end);
+    const inDateRange = createdDate >= startDate && createdDate <= endDate;
+
+    const matchesSearch = searchTerm === '' ||
       order.displayOrderId?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      order.shippingAddress?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      order.ekartTrackingId?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       order.shippingAddress?.mobile?.includes(searchTerm);
-    
-    const matchesStatus = statusFilter === 'ALL' || 
+   
+    const matchesStatus = statusFilter === 'ALL' ||
       order.ekartStatus?.toLowerCase() === statusFilter.toLowerCase();
-    
-    return matchesSearch && matchesStatus;
+   
+    return inDateRange && matchesSearch && matchesStatus;
   });
+
+  const paginatedOrders = filteredOrders.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  );
 
   const cancelOrder = async (orderId) => {
     if (!confirm(`Are you sure you want to cancel order ${orderId}?`)) {
       return;
     }
-    
+   
     setCancellingOrder(orderId);
     try {
       const { data } = await API.put(`/orders/admin/cancel/${orderId}`);
-      
+     
       if (data.success) {
         showNotification(`Order ${orderId} cancelled successfully!`, 'success');
         fetchOrders();
@@ -210,7 +263,7 @@ const AdminOrders = () => {
   const viewOrderDetails = async (order) => {
     setSelectedOrder(order);
     setNotes(order.notes || '');
-    
+   
     if (order.ekartTrackingId) {
       setLoadingTracking(true);
       try {
@@ -226,7 +279,7 @@ const AdminOrders = () => {
 
   const createShipment = async (orderId) => {
     if (!confirm('Create Ekart shipment for this order?')) return;
-    
+   
     setCreatingShipment(orderId);
     try {
       const { data } = await API.post(`/orders/admin/create-shipment/${orderId}`);
@@ -268,13 +321,13 @@ const AdminOrders = () => {
       showNotification('Please enter a note', 'error');
       return;
     }
-    
+   
     setAddingNote(true);
     try {
       const { data } = await API.post(`/orders/admin/add-note/${selectedOrder.orderId}`, {
         notes: notes
       });
-      
+     
       if (data.success) {
         showNotification('Note added successfully!', 'success');
         setSelectedOrder({
@@ -298,8 +351,8 @@ const AdminOrders = () => {
 
   const updateOrderStatus = async (orderId, newStatus) => {
     try {
-      await API.put(`/orders/admin/update-status/${orderId}`, { 
-        orderStatus: newStatus.toLowerCase() 
+      await API.put(`/orders/admin/update-status/${orderId}`, {
+        orderStatus: newStatus.toLowerCase()
       });
       showNotification('Order status updated successfully!', 'success');
       fetchOrders();
@@ -315,13 +368,11 @@ const AdminOrders = () => {
       showNotification('No tracking ID available for this order', 'error');
       return;
     }
-
     setDownloadingLabel(order.orderId);
     try {
       const response = await API.get(`/orders/admin/label/${order.orderId}`, {
         responseType: 'blob'
       });
-
       const blob = new Blob([response.data], { type: 'application/pdf' });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -331,7 +382,7 @@ const AdminOrders = () => {
       link.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(link);
-      
+     
       console.log('✅ Label downloaded:', order.ekartTrackingId);
       showNotification(`Label downloaded for order ${order.orderId}`, 'success');
     } catch (error) {
@@ -348,13 +399,11 @@ const AdminOrders = () => {
       showNotification('No tracking ID available for this order', 'error');
       return;
     }
-
     setDownloadingInvoice(order.orderId);
     try {
       const response = await API.get(`/orders/admin/invoice/${order.orderId}`, {
         responseType: 'blob'
       });
-
       const blob = new Blob([response.data], { type: 'application/pdf' });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -364,7 +413,7 @@ const AdminOrders = () => {
       link.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(link);
-      
+     
       console.log('✅ Invoice downloaded:', order.ekartTrackingId);
       showNotification(`Invoice downloaded for order ${order.orderId}`, 'success');
     } catch (error) {
@@ -381,16 +430,14 @@ const AdminOrders = () => {
       showNotification('No tracking ID available for this order', 'error');
       return;
     }
-
     setDownloadingLabel(order.orderId);
     setDownloadingInvoice(order.orderId);
-    
+   
     try {
       // Download label
       const labelResponse = await API.get(`/orders/admin/label/${order.orderId}`, {
         responseType: 'blob'
       });
-
       const labelBlob = new Blob([labelResponse.data], { type: 'application/pdf' });
       const labelUrl = window.URL.createObjectURL(labelBlob);
       const labelLink = document.createElement('a');
@@ -400,15 +447,12 @@ const AdminOrders = () => {
       labelLink.click();
       window.URL.revokeObjectURL(labelUrl);
       document.body.removeChild(labelLink);
-
       // Wait a bit before downloading invoice
       await new Promise(resolve => setTimeout(resolve, 500));
-
       // Download invoice
       const invoiceResponse = await API.get(`/orders/admin/invoice/${order.orderId}`, {
         responseType: 'blob'
       });
-
       const invoiceBlob = new Blob([invoiceResponse.data], { type: 'application/pdf' });
       const invoiceUrl = window.URL.createObjectURL(invoiceBlob);
       const invoiceLink = document.createElement('a');
@@ -418,7 +462,7 @@ const AdminOrders = () => {
       invoiceLink.click();
       window.URL.revokeObjectURL(invoiceUrl);
       document.body.removeChild(invoiceLink);
-      
+     
       console.log('✅ Label & Invoice downloaded:', order.ekartTrackingId);
       showNotification(`Label & Invoice downloaded for order ${order.orderId}`, 'success');
     } catch (error) {
@@ -436,20 +480,16 @@ const AdminOrders = () => {
       showNotification('Please select orders to download labels', 'error');
       return;
     }
-
-    const selectedOrderIds = selectedOrders.map(id => 
+    const selectedOrderIds = selectedOrders.map(id =>
       orders.find(order => order._id === id)?.orderId
     ).filter(Boolean);
-
     if (selectedOrderIds.length === 0) {
       showNotification('No valid orders selected', 'error');
       return;
     }
-
     if (!confirm(`Download labels for ${selectedOrderIds.length} selected orders?`)) {
       return;
     }
-
     setDownloadingBulk(true);
     try {
       const response = await API.post('/orders/admin/labels/bulk', {
@@ -457,7 +497,6 @@ const AdminOrders = () => {
       }, {
         responseType: 'blob'
       });
-
       const blob = new Blob([response.data], { type: 'application/pdf' });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -467,7 +506,7 @@ const AdminOrders = () => {
       link.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(link);
-      
+     
       console.log(`✅ Bulk labels downloaded (${selectedOrderIds.length} orders)`);
       showNotification(`Downloaded ${selectedOrderIds.length} labels`, 'success');
     } catch (error) {
@@ -484,20 +523,16 @@ const AdminOrders = () => {
       showNotification('Please select orders to download invoices', 'error');
       return;
     }
-
-    const selectedOrderIds = selectedOrders.map(id => 
+    const selectedOrderIds = selectedOrders.map(id =>
       orders.find(order => order._id === id)?.orderId
     ).filter(Boolean);
-
     if (selectedOrderIds.length === 0) {
       showNotification('No valid orders selected', 'error');
       return;
     }
-
     if (!confirm(`Download invoices for ${selectedOrderIds.length} selected orders?`)) {
       return;
     }
-
     setDownloadingBulk(true);
     try {
       const response = await API.post('/orders/admin/invoices/bulk', {
@@ -505,7 +540,6 @@ const AdminOrders = () => {
       }, {
         responseType: 'blob'
       });
-
       const blob = new Blob([response.data], { type: 'application/pdf' });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -515,7 +549,7 @@ const AdminOrders = () => {
       link.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(link);
-      
+     
       console.log(`✅ Bulk invoices downloaded (${selectedOrderIds.length} orders)`);
       showNotification(`Downloaded ${selectedOrderIds.length} invoices`, 'success');
     } catch (error) {
@@ -532,22 +566,18 @@ const AdminOrders = () => {
       showNotification('Please select orders to download manifest', 'error');
       return;
     }
-
-    const selectedOrderIds = selectedOrders.map(id => 
+    const selectedOrderIds = selectedOrders.map(id =>
       orders.find(order => order._id === id)?.orderId
     ).filter(Boolean);
-
     if (selectedOrderIds.length === 0) {
       showNotification('No valid orders selected', 'error');
       return;
     }
-
     setDownloadingManifest(true);
     try {
       const response = await API.post('/orders/admin/manifest/bulk', {
         orderIds: selectedOrderIds
       });
-
       if (response.data.success && response.data.manifestUrl) {
         window.open(response.data.manifestUrl, '_blank');
         console.log('✅ Manifest opened:', response.data.manifestUrl);
@@ -569,7 +599,6 @@ const AdminOrders = () => {
       showNotification('Please select orders first', 'error');
       return;
     }
-
     if (bulkActionType === 'labels') {
       downloadBulkLabels();
     } else if (bulkActionType === 'invoices') {
@@ -588,16 +617,13 @@ const AdminOrders = () => {
     if (!confirm(`Download labels for all ${filteredOrders.length} filtered orders?`)) {
       return;
     }
-
     const orderIds = filteredOrders
       .filter(order => order.ekartTrackingId)
       .map(order => order.orderId);
-
     if (orderIds.length === 0) {
       showNotification('No orders with tracking IDs found', 'error');
       return;
     }
-
     setDownloadingBulk(true);
     try {
       const response = await API.post('/orders/admin/labels/bulk', {
@@ -605,7 +631,6 @@ const AdminOrders = () => {
       }, {
         responseType: 'blob'
       });
-
       const blob = new Blob([response.data], { type: 'application/pdf' });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -615,7 +640,7 @@ const AdminOrders = () => {
       link.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(link);
-      
+     
       console.log(`✅ All labels downloaded (${orderIds.length} orders)`);
       showNotification(`Downloaded ${orderIds.length} labels`, 'success');
     } catch (error) {
@@ -630,16 +655,13 @@ const AdminOrders = () => {
     if (!confirm(`Download invoices for all ${filteredOrders.length} filtered orders?`)) {
       return;
     }
-
     const orderIds = filteredOrders
       .filter(order => order.ekartTrackingId)
       .map(order => order.orderId);
-
     if (orderIds.length === 0) {
       showNotification('No orders with tracking IDs found', 'error');
       return;
     }
-
     setDownloadingBulk(true);
     try {
       const response = await API.post('/orders/admin/invoices/bulk', {
@@ -647,7 +669,6 @@ const AdminOrders = () => {
       }, {
         responseType: 'blob'
       });
-
       const blob = new Blob([response.data], { type: 'application/pdf' });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -657,7 +678,7 @@ const AdminOrders = () => {
       link.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(link);
-      
+     
       console.log(`✅ All invoices downloaded (${orderIds.length} orders)`);
       showNotification(`Downloaded ${orderIds.length} invoices`, 'success');
     } catch (error) {
@@ -668,9 +689,13 @@ const AdminOrders = () => {
     }
   };
 
+  const handlePageChange = (page) => {
+    setCurrentPage(page);
+  };
+
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
+      <div className="flex items-center justify-center min-h-screen bg-gray-50">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
           <p className="mt-4 text-gray-600">Loading orders from Ekart...</p>
@@ -680,7 +705,7 @@ const AdminOrders = () => {
   }
 
   return (
-    <div className="container mx-auto px-4 py-6 relative">
+    <div className="min-h-screen bg-gray-50 p-6">
       {/* Notification */}
       {notification && (
         <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg flex items-center space-x-3 ${
@@ -699,128 +724,91 @@ const AdminOrders = () => {
       )}
 
       {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-800">eXart</h1>
-        
-        <div className="flex space-x-6 mt-4 border-b">
-          <div>
-            <h2 className="text-lg font-semibold text-gray-700">Analytics</h2>
-            <div className="mt-2 space-y-1">
-              <div className="text-sm text-gray-600">Orders</div>
-              <div className="text-sm text-gray-500">Other Summary</div>
-              <div className="text-sm text-gray-500">Proding Actions</div>
-              <div className="text-sm text-gray-500">Support Journey</div>
-            </div>
+      <div className="bg-white rounded-lg shadow-sm border p-6 mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center space-x-6">
+            <h1 className="text-xl font-bold text-gray-900">Orders</h1>
+            <span className="text-sm text-gray-500">Pending Actions</span>
           </div>
-          
-          <div className="flex-1">
-            <h2 className="text-lg font-semibold text-gray-700">Packaging</h2>
-            
-            <div className="flex space-x-2 mt-2 mb-4 overflow-x-auto">
-              {statusOptions.map(status => (
-                <button
-                  key={status}
-                  onClick={() => setStatusFilter(status)}
-                  className={`px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap ${
-                    statusFilter === status
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
-                  {status}
-                </button>
-              ))}
-            </div>
-          </div>
+          <button className="px-4 py-2 bg-blue-600 text-white rounded-lg flex items-center space-x-2">
+            <RefreshCw className="w-4 h-4" />
+            <span>Sync Orders</span>
+          </button>
         </div>
-      </div>
-
-      {/* Quick Action Bar */}
-      <div className="mb-4 p-4 bg-gray-50 border rounded-lg">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-4">
-            <span className="font-medium text-gray-700">Quick Actions:</span>
-            
-            <button
-              onClick={downloadAllLabels}
-              disabled={downloadingBulk}
-              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center text-sm"
-            >
-              {downloadingBulk ? (
-                <>
-                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white mr-2"></div>
-                  Downloading...
-                </>
-              ) : (
-                <>
-                  <FileDown className="w-4 h-4 mr-2" />
-                  Download All Labels
-                </>
-              )}
-            </button>
-            
-            <button
-              onClick={downloadAllInvoices}
-              disabled={downloadingBulk}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center text-sm"
-            >
-              {downloadingBulk ? (
-                <>
-                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white mr-2"></div>
-                  Downloading...
-                </>
-              ) : (
-                <>
-                  <Receipt className="w-4 h-4 mr-2" />
-                  Download All Invoices
-                </>
-              )}
-            </button>
-            
-            <button
-              onClick={downloadManifest}
-              disabled={downloadingManifest}
-              className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 flex items-center text-sm"
-            >
-              {downloadingManifest ? (
-                <>
-                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white mr-2"></div>
-                  Generating...
-                </>
-              ) : (
-                <>
-                  <Layers className="w-4 h-4 mr-2" />
-                  Download Manifest
-                </>
-              )}
-            </button>
-          </div>
-          
-          <div className="flex items-center space-x-4">
-            <div className="flex items-center">
-              <span className="text-sm text-gray-600 mr-2">View:</span>
-              <div className="flex border rounded-lg">
-                <button
-                  onClick={() => setViewType('table')}
-                  className={`px-3 py-1 text-sm ${viewType === 'table' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700'}`}
-                >
-                  Table
-                </button>
-                <button
-                  onClick={() => setViewType('card')}
-                  className={`px-3 py-1 text-sm ${viewType === 'card' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700'}`}
-                >
-                  Cards
-                </button>
-              </div>
+            <div className="flex items-center space-x-2 text-sm text-gray-600">
+              <Calendar className="w-4 h-4" />
+              <span>Order Creation Date</span>
             </div>
+            <input
+              type="date"
+              value={dateRange.start}
+              onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
+              className="border rounded px-2 py-1 text-sm"
+            />
+            <span>to</span>
+            <input
+              type="date"
+              value={dateRange.end}
+              onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
+              className="border rounded px-2 py-1 text-sm"
+            />
+          </div>
+          <div className="flex items-center space-x-2 bg-gray-100 p-2 rounded">
+            <Search className="w-4 h-4 text-gray-500" />
+            <input
+              type="text"
+              placeholder="Order ID, Shipment ID, Phone"
+              className="bg-transparent outline-none text-sm w-64"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
           </div>
         </div>
       </div>
 
-      {/* Bulk Actions Bar */}
+      {/* Order Summary */}
+      <div className="bg-white rounded-lg shadow-sm border p-6 mb-6">
+        <div className="flex space-x-8">
+          <div className="text-center">
+            <div className="text-2xl font-bold text-gray-900">33</div>
+            <div className="text-sm text-gray-500 mt-1">All</div>
+          </div>
+          <div className="text-center">
+            <div className="text-2xl font-bold text-red-600">33</div>
+            <div className="text-sm text-gray-500 mt-1">Cancelled</div>
+          </div>
+          <div className="text-center">
+            <div className="text-2xl font-bold text-gray-900">0</div>
+            <div className="text-sm text-gray-500 mt-1">Open</div>
+          </div>
+          <div className="text-center">
+            <div className="text-2xl font-bold text-gray-900">0</div>
+            <div className="text-sm text-gray-500 mt-1">Ready to Ship</div>
+          </div>
+          <div className="text-center">
+            <div className="text-2xl font-bold text-gray-900">0</div>
+            <div className="text-sm text-gray-500 mt-1">Ready for Pickup</div>
+          </div>
+          <div className="text-center">
+            <div className="text-2xl font-bold text-gray-900">0</div>
+            <div className="text-sm text-gray-500 mt-1">In Transit</div>
+          </div>
+          <div className="text-center">
+            <div className="text-2xl font-bold text-gray-900">0</div>
+            <div className="text-sm text-gray-500 mt-1">Delivered</div>
+          </div>
+          <div className="text-center">
+            <div className="text-2xl font-bold text-gray-900">0</div>
+            <div className="text-sm text-gray-500 mt-1">RTO</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Bulk Actions Bar - Only if selections */}
       {selectedOrders.length > 0 && (
-        <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+        <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
               <div className="flex items-center">
@@ -829,7 +817,7 @@ const AdminOrders = () => {
                   {selectedOrders.length} orders selected
                 </span>
               </div>
-              
+             
               <button
                 onClick={() => setShowBulkOptions(!showBulkOptions)}
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center"
@@ -839,7 +827,7 @@ const AdminOrders = () => {
                 {showBulkOptions ? <ChevronUp className="w-4 h-4 ml-2" /> : <ChevronDown className="w-4 h-4 ml-2" />}
               </button>
             </div>
-            
+           
             <button
               onClick={() => setSelectedOrders([])}
               className="text-gray-600 hover:text-gray-800 flex items-center"
@@ -848,7 +836,7 @@ const AdminOrders = () => {
               Clear selection
             </button>
           </div>
-          
+         
           {showBulkOptions && (
             <div className="mt-4 p-4 bg-white border rounded-lg">
               <h3 className="font-medium mb-3">Select Bulk Action:</h3>
@@ -871,7 +859,7 @@ const AdminOrders = () => {
                     </div>
                   </label>
                 </div>
-                
+               
                 <div className="flex items-center p-2 border rounded hover:bg-gray-50">
                   <input
                     type="radio"
@@ -890,7 +878,7 @@ const AdminOrders = () => {
                     </div>
                   </label>
                 </div>
-                
+               
                 <div className="flex items-center p-2 border rounded hover:bg-gray-50">
                   <input
                     type="radio"
@@ -909,7 +897,7 @@ const AdminOrders = () => {
                     </div>
                   </label>
                 </div>
-                
+               
                 <div className="flex items-center p-2 border rounded hover:bg-gray-50">
                   <input
                     type="radio"
@@ -929,7 +917,7 @@ const AdminOrders = () => {
                   </label>
                 </div>
               </div>
-              
+             
               <div className="flex justify-end space-x-3">
                 <button
                   onClick={() => setShowBulkOptions(false)}
@@ -960,495 +948,166 @@ const AdminOrders = () => {
         </div>
       )}
 
-      {/* Search and Actions */}
-      <div className="flex justify-between items-center mb-4">
-        <div className="flex items-center space-x-4">
-          <div className="flex items-center bg-white border rounded-lg px-3 py-2">
-            <Search className="w-5 h-5 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Search orders..."
-              className="ml-2 outline-none w-64"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
+      {/* Table */}
+      <div className="bg-white rounded-lg shadow-sm border overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-4 border-b">
+          <h2 className="text-lg font-semibold text-gray-900">All Orders</h2>
+          <div className="flex items-center space-x-2">
+            <span className="text-sm text-gray-500">Last updated</span>
+            <button className="px-3 py-1 bg-blue-600 text-white rounded text-sm ml-2">Bulk Action ▼</button>
+            <button className="px-3 py-1 bg-green-600 text-white rounded text-sm ml-2">+ Add Order</button>
+            <button className="px-3 py-1 text-gray-500 rounded text-sm ml-2">⟲</button>
+            <button className="px-3 py-1 text-gray-500 rounded text-sm ml-2">C</button>
+            <button className="px-3 py-1 text-gray-500 rounded text-sm ml-2">⋮</button>
+            <button className="px-3 py-1 text-gray-500 rounded text-sm ml-2">Clear filters</button>
           </div>
-          
-          <button className="flex items-center px-4 py-2 border rounded-lg hover:bg-gray-50">
-            <Filter className="w-4 h-4 mr-2" />
-            Filter
-          </button>
         </div>
-        
-        <div className="flex items-center space-x-3">
-          <span className="text-sm text-gray-600">
-            {filteredOrders.length} orders found
-          </span>
-          
-          <button 
-            onClick={fetchOrders}
-            className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-          >
-            <RefreshCw className="w-4 h-4 mr-2" />
-            Refresh
-          </button>
-        </div>
-      </div>
-
-      {/* TABLE VIEW */}
-      {viewType === 'table' && (
-        <div className="bg-white rounded-lg border overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="min-w-full">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="w-12 px-6 py-3 text-left">
-                    <button
-                      onClick={selectAllOrders}
-                      className="flex items-center justify-center w-5 h-5"
-                    >
-                      {selectedOrders.length === filteredOrders.length && filteredOrders.length > 0 ? (
-                        <CheckSquare className="w-5 h-5 text-blue-600" />
-                      ) : (
-                        <Square className="w-5 h-5 text-gray-400" />
-                      )}
-                    </button>
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Channel
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Last Updated
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Order ID
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Items
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Shipping Details
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Payment Info
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Order Tags
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Status
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200">
-                {filteredOrders.map((order) => (
-                  <React.Fragment key={order._id}>
-                    <tr className="hover:bg-gray-50">
-                      <td className="px-6 py-4">
-                        <input
-                          type="checkbox"
-                          checked={selectedOrders.includes(order._id)}
-                          onChange={() => toggleOrderSelection(order._id)}
-                          className="rounded"
-                        />
-                      </td>
-                      
-                      <td className="px-6 py-4">
-                        <div className="text-sm font-medium text-gray-900">
-                          {order.channel}
-                        </div>
-                      </td>
-                      
-                      <td className="px-6 py-4">
-                        <div className="text-sm text-gray-900">
-                          {new Date(order.lastUpdated).toLocaleDateString('en-GB', {
-                            day: '2-digit',
-                            month: 'short',
-                            year: 'numeric'
-                          })}, {new Date(order.lastUpdated).toLocaleTimeString('en-US', {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                            hour12: true
-                          })}
-                        </div>
-                      </td>
-                      
-                      <td className="px-6 py-4">
-                        <div className="text-sm font-medium text-gray-900">
-                          {order.displayOrderId}
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          {new Date(order.createdAt).toLocaleDateString('en-GB', {
-                            day: '2-digit',
-                            month: 'short',
-                            year: 'numeric'
-                          })}, {new Date(order.createdAt).toLocaleTimeString('en-US', {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                            hour12: true
-                          })}
-                        </div>
-                      </td>
-                      
-                      <td className="px-6 py-4">
-                        <div className="text-sm text-gray-900">
-                          {order.displayItems}
-                        </div>
-                      </td>
-                      
-                      <td className="px-6 py-4">
-                        <div className="text-sm text-gray-900">
-                          {order.shippingDisplay}
-                        </div>
-                      </td>
-                      
-                      <td className="px-6 py-4">
-                        <div className="text-sm text-gray-900">
-                          {order.paymentDisplay}
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          {order.paymentStatus || 'Pending'}
-                        </div>
-                      </td>
-                      
-                      <td className="px-6 py-4">
-                        <div className="flex flex-wrap gap-1">
-                          {order.orderTags?.map((tag, index) => (
-                            <span 
-                              key={index}
-                              className="px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded"
-                            >
-                              {tag}
-                            </span>
-                          ))}
-                        </div>
-                      </td>
-                      
-                      <td className="px-6 py-4">
-                        <span className={`px-3 py-1 rounded-full text-xs font-medium border ${getEkartStatusColor(order.ekartStatus)}`}>
-                          {order.ekartStatus}
-                        </span>
-                      </td>
-                      
-                      <td className="px-6 py-4">
-                        <div className="flex flex-wrap gap-2">
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12">
+                  <input
+                    type="checkbox"
+                    checked={selectedOrders.length === filteredOrders.length && filteredOrders.length > 0}
+                    onChange={selectAllOrders}
+                    className="rounded"
+                  />
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Channel</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Last Updated</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Order ID</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Items</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Shipping Details</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Payment Info</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Order Tags</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {paginatedOrders.map((order) => (
+                <React.Fragment key={order._id}>
+                  <tr className="hover:bg-gray-50">
+                    <td className="px-6 py-4">
+                      <input
+                        type="checkbox"
+                        checked={selectedOrders.includes(order._id)}
+                        onChange={() => toggleOrderSelection(order._id)}
+                        className="rounded"
+                      />
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center">
+                        <span className="text-yellow-600 font-bold mr-2">eXart</span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-900">
+                      {new Date(order.lastUpdated).toLocaleDateString('en-GB', {
+                        day: '2-digit',
+                        month: 'short',
+                        year: 'numeric'
+                      })}
+                      <div className="text-xs text-gray-500">
+                        {new Date(order.lastUpdated).toLocaleTimeString('en-US', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          hour12: true
+                        })}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="text-sm font-medium text-gray-900">{order.displayOrderId}</div>
+                      <div className="text-xs text-gray-500">
+                        {new Date(order.createdAt).toLocaleDateString('en-GB', {
+                          day: '2-digit',
+                          month: 'short',
+                          year: 'numeric'
+                        })}, {new Date(order.createdAt).toLocaleTimeString('en-US', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          hour12: true
+                        })}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-900">
+                      {order.displayItems}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-900">
+                      {order.shippingDisplay}
+                      <div className="text-xs text-gray-500">{order.shippingAddress?.pincode} (O)</div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="text-sm text-gray-900">{order.paymentDisplay}</div>
+                      <div className="text-xs text-gray-500">Paid</div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex flex-wrap gap-1">
+                        {order.orderTags.slice(0, 3).map((tag, index) => (
+                          <span
+                            key={index}
+                            className={`px-2 py-1 text-xs font-medium rounded-full border ${getTagColor(tag)}`}
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                        {order.orderTags.length > 3 && (
+                          <span className="text-xs text-gray-500">+{order.orderTags.length - 3} more</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className={`px-3 py-1 rounded-full text-xs font-medium border ${getEkartStatusColor(order.ekartStatus)}`}>
+                        {order.ekartStatus}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center space-x-2">
+                        <button
+                          onClick={() => viewOrderDetails(order)}
+                          className="text-blue-600 hover:text-blue-800 text-sm flex items-center"
+                          title="View"
+                        >
+                          <Eye className="w-4 h-4" />
+                        </button>
+                        <button className="text-gray-500 hover:text-gray-700" title="Notes">
+                          <FileText className="w-4 h-4" />
+                        </button>
+                        <button className="text-gray-500 hover:text-gray-700" title="More">
+                          <MoreVertical className="w-4 h-4" />
+                        </button>
+                        {order.ekartTrackingId && (
                           <button
-                            onClick={() => viewOrderDetails(order)}
+                            onClick={() => downloadInvoice(order)}
+                            disabled={downloadingInvoice === order.orderId}
                             className="text-blue-600 hover:text-blue-800 text-sm flex items-center"
+                            title="Download Invoice"
                           >
-                            <Eye className="w-3 h-3 mr-1" />
-                            View
-                          </button>
-                          
-                          {/* Download Buttons */}
-                          {order.ekartTrackingId && (
-                            <>
-                              <button
-                                onClick={() => downloadLabel(order)}
-                                disabled={downloadingLabel === order.orderId}
-                                className="text-green-600 hover:text-green-800 text-sm flex items-center"
-                                title="Download Label"
-                              >
-                                {downloadingLabel === order.orderId ? (
-                                  <>
-                                    <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-green-600 mr-1"></div>
-                                    ...
-                                  </>
-                                ) : (
-                                  <>
-                                    <FileDown className="w-3 h-3 mr-1" />
-                                    Label
-                                  </>
-                                )}
-                              </button>
-                              
-                              <button
-                                onClick={() => downloadInvoice(order)}
-                                disabled={downloadingInvoice === order.orderId}
-                                className="text-blue-600 hover:text-blue-800 text-sm flex items-center"
-                                title="Download Invoice"
-                              >
-                                {downloadingInvoice === order.orderId ? (
-                                  <>
-                                    <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-600 mr-1"></div>
-                                    ...
-                                  </>
-                                ) : (
-                                  <>
-                                    <Receipt className="w-3 h-3 mr-1" />
-                                    Invoice
-                                  </>
-                                )}
-                              </button>
-                              
-                              <button
-                                onClick={() => downloadBoth(order)}
-                                disabled={downloadingLabel === order.orderId || downloadingInvoice === order.orderId}
-                                className="text-purple-600 hover:text-purple-800 text-sm flex items-center"
-                                title="Download Both"
-                              >
-                                <Archive className="w-3 h-3 mr-1" />
-                                Both
-                              </button>
-                            </>
-                          )}
-                          
-                          {order.ekartStatus === 'Ready To Ship' && !order.ekartTrackingId && (
-                            <button
-                              onClick={() => createShipment(order.orderId)}
-                              disabled={creatingShipment === order.orderId}
-                              className="text-green-600 hover:text-green-800 text-sm"
-                            >
-                              {creatingShipment === order.orderId ? 'Creating...' : 'Ship'}
-                            </button>
-                          )}
-                          
-                          {order.ekartStatus !== 'Canceled' && order.ekartStatus !== 'Delivered' && (
-                            <button
-                              onClick={() => cancelOrder(order.orderId)}
-                              disabled={cancellingOrder === order.orderId}
-                              className="text-red-600 hover:text-red-800 text-sm"
-                            >
-                              {cancellingOrder === order.orderId ? 'Cancelling...' : 'Cancel'}
-                            </button>
-                          )}
-                          
-                          {order.ekartTrackingId && (
-                            <a
-                              href={`https://app.elite.ekartlogistics.in/track/${order.ekartTrackingId}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-orange-600 hover:text-orange-800 text-sm flex items-center"
-                              title="Track on Ekart"
-                            >
-                              <Truck className="w-3 h-3 mr-1" />
-                              Track
-                            </a>
-                          )}
-                          
-                          <button
-                            onClick={() => toggleExpandOrder(order._id)}
-                            className="text-gray-600 hover:text-gray-800 text-sm flex items-center"
-                          >
-                            {expandedOrders.includes(order._id) ? (
-                              <>
-                                <ChevronUp className="w-3 h-3 mr-1" />
-                                Less
-                              </>
+                            {downloadingInvoice === order.orderId ? (
+                              <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-600"></div>
                             ) : (
-                              <>
-                                <ChevronDown className="w-3 h-3 mr-1" />
-                                More
-                              </>
+                              <DownloadCloud className="w-4 h-4" />
                             )}
                           </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                  {expandedOrders.includes(order._id) && (
+                    <tr className="bg-gray-50">
+                      <td colSpan="10" className="px-6 py-4">
+                        <div className="text-sm text-gray-600">
+                          Expanded details for order {order.displayOrderId}...
                         </div>
                       </td>
                     </tr>
-                    
-                    {/* Expanded Row */}
-                    {expandedOrders.includes(order._id) && (
-                      <tr className="bg-blue-50">
-                        <td colSpan="10" className="px-6 py-4">
-                          <div className="grid grid-cols-2 gap-4 text-sm">
-                            <div>
-                              <div className="font-medium text-gray-700 mb-2">Quick Actions:</div>
-                              <div className="flex flex-wrap gap-2">
-                                {order.ekartTrackingId ? (
-                                  <>
-                                    <button
-                                      onClick={() => downloadLabel(order)}
-                                      disabled={downloadingLabel === order.orderId}
-                                      className="px-3 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700 disabled:opacity-50 flex items-center"
-                                    >
-                                      <FileDown className="w-3 h-3 mr-1" />
-                                      Label PDF
-                                    </button>
-                                    <button
-                                      onClick={() => downloadInvoice(order)}
-                                      disabled={downloadingInvoice === order.orderId}
-                                      className="px-3 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700 disabled:opacity-50 flex items-center"
-                                    >
-                                      <Receipt className="w-3 h-3 mr-1" />
-                                      Invoice PDF
-                                    </button>
-                                    <button
-                                      onClick={() => downloadBoth(order)}
-                                      disabled={downloadingLabel === order.orderId || downloadingInvoice === order.orderId}
-                                      className="px-3 py-1 bg-purple-600 text-white rounded text-xs hover:bg-purple-700 disabled:opacity-50 flex items-center"
-                                    >
-                                      <Archive className="w-3 h-3 mr-1" />
-                                      Both PDFs
-                                    </button>
-                                    <a
-                                      href={`https://app.elite.ekartlogistics.in/track/${order.ekartTrackingId}`}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="px-3 py-1 bg-orange-600 text-white rounded text-xs hover:bg-orange-700 flex items-center"
-                                    >
-                                      <Truck className="w-3 h-3 mr-1" />
-                                      Track on Ekart
-                                    </a>
-                                  </>
-                                ) : (
-                                  <button
-                                    onClick={() => createShipment(order.orderId)}
-                                    disabled={creatingShipment === order.orderId}
-                                    className="px-3 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700 disabled:opacity-50 flex items-center"
-                                  >
-                                    <Truck className="w-3 h-3 mr-1" />
-                                    Create Shipment
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                            <div>
-                              <div className="font-medium text-gray-700 mb-2">Order Details:</div>
-                              <div className="space-y-1">
-                                <div>Amount: ₹{order.finalAmount}</div>
-                                <div>Items: {order.items.length} products</div>
-                                {order.ekartTrackingId && (
-                                  <div className="font-mono text-xs">Tracking: {order.ekartTrackingId}</div>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </React.Fragment>
-                ))}
-              </tbody>
-            </table>
-            
-            {filteredOrders.length === 0 && (
-              <div className="text-center py-12">
-                <Package className="mx-auto h-12 w-12 text-gray-400" />
-                <h3 className="mt-2 text-sm font-medium text-gray-900">No orders found</h3>
-                <p className="mt-1 text-sm text-gray-500">
-                  {searchTerm ? 'Try a different search term' : 'No orders match the selected filter'}
-                </p>
-              </div>
-            )}
-          </div>
-          
-          <div className="px-6 py-3 border-t flex justify-between items-center">
-            <div className="text-sm text-gray-700">
-              Showing <span className="font-medium">{filteredOrders.length}</span> orders
-            </div>
-            <div className="flex space-x-2">
-              <button className="px-3 py-1 border rounded text-sm">Previous</button>
-              <button className="px-3 py-1 border rounded bg-blue-600 text-white text-sm">1</button>
-              <button className="px-3 py-1 border rounded text-sm">2</button>
-              <button className="px-3 py-1 border rounded text-sm">Next</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* CARD VIEW */}
-      {viewType === 'card' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredOrders.map((order) => (
-            <div key={order._id} className="bg-white border rounded-lg p-4 hover:shadow-md transition-shadow">
-              <div className="flex justify-between items-start mb-3">
-                <div>
-                  <div className="font-medium text-gray-900">{order.displayOrderId}</div>
-                  <div className="text-xs text-gray-500">
-                    {new Date(order.createdAt).toLocaleDateString()}
-                  </div>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={selectedOrders.includes(order._id)}
-                  onChange={() => toggleOrderSelection(order._id)}
-                  className="rounded"
-                />
-              </div>
-              
-              <div className="mb-3">
-                <div className="flex items-center justify-between mb-2">
-                  <span className={`px-2 py-1 rounded-full text-xs font-medium border ${getEkartStatusColor(order.ekartStatus)}`}>
-                    {order.ekartStatus}
-                  </span>
-                  <span className="font-medium">₹{order.finalAmount}</span>
-                </div>
-                
-                <div className="text-sm text-gray-600 mb-1">
-                  <User className="w-3 h-3 inline mr-1" />
-                  {order.shippingAddress?.name || 'Customer'}
-                </div>
-                <div className="text-sm text-gray-600 mb-1">
-                  <Phone className="w-3 h-3 inline mr-1" />
-                  {order.shippingAddress?.mobile || 'N/A'}
-                </div>
-                <div className="text-sm text-gray-600">
-                  <MapPin className="w-3 h-3 inline mr-1" />
-                  {order.shippingAddress?.city || ''}
-                </div>
-              </div>
-              
-              <div className="mb-3">
-                <div className="text-sm font-medium text-gray-700 mb-1">Items:</div>
-                <div className="text-sm text-gray-600">{order.displayItems}</div>
-              </div>
-              
-              {order.ekartTrackingId && (
-                <div className="mb-3 p-2 bg-blue-50 rounded">
-                  <div className="text-xs font-medium text-blue-800 mb-1">Tracking ID:</div>
-                  <div className="font-mono text-sm">{order.ekartTrackingId}</div>
-                </div>
-              )}
-              
-              <div className="flex flex-wrap gap-2">
-                <button
-                  onClick={() => viewOrderDetails(order)}
-                  className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 flex items-center"
-                >
-                  <Eye className="w-3 h-3 mr-1" />
-                  View
-                </button>
-                
-                {order.ekartTrackingId && (
-                  <>
-                    <button
-                      onClick={() => downloadLabel(order)}
-                      disabled={downloadingLabel === order.orderId}
-                      className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700 disabled:opacity-50 flex items-center"
-                    >
-                      <FileDown className="w-3 h-3 mr-1" />
-                      Label
-                    </button>
-                    
-                    <button
-                      onClick={() => downloadInvoice(order)}
-                      disabled={downloadingInvoice === order.orderId}
-                      className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50 flex items-center"
-                    >
-                      <Receipt className="w-3 h-3 mr-1" />
-                      Invoice
-                    </button>
-                  </>
-                )}
-                
-                {order.ekartStatus === 'Ready To Ship' && !order.ekartTrackingId && (
-                  <button
-                    onClick={() => createShipment(order.orderId)}
-                    disabled={creatingShipment === order.orderId}
-                    className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700 disabled:opacity-50"
-                  >
-                    {creatingShipment === order.orderId ? 'Creating...' : 'Ship'}
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
-          
+                  )}
+                </React.Fragment>
+              ))}
+            </tbody>
+          </table>
           {filteredOrders.length === 0 && (
-            <div className="col-span-3 text-center py-12">
+            <div className="text-center py-12">
               <Package className="mx-auto h-12 w-12 text-gray-400" />
               <h3 className="mt-2 text-sm font-medium text-gray-900">No orders found</h3>
               <p className="mt-1 text-sm text-gray-500">
@@ -1457,7 +1116,33 @@ const AdminOrders = () => {
             </div>
           )}
         </div>
-      )}
+        {filteredOrders.length > 0 && (
+          <div className="px-6 py-3 border-t bg-gray-50 flex justify-between items-center">
+            <div className="text-sm text-gray-700">
+              Showing {((currentPage - 1) * itemsPerPage) + 1}-{Math.min(currentPage * itemsPerPage, totalItems)} of {totalItems} items
+            </div>
+            <div className="flex items-center space-x-2">
+              <span className="text-sm text-gray-500">({currentPage})</span>
+              <span className="text-sm text-gray-500">100/page</span>
+              <button
+                onClick={() => handlePageChange(currentPage - 1)}
+                disabled={currentPage === 1}
+                className="px-2 py-1 disabled:opacity-50"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <button className="px-3 py-1 bg-blue-600 text-white rounded text-sm">1</button>
+              <button
+                onClick={() => handlePageChange(currentPage + 1)}
+                disabled={currentPage * itemsPerPage >= totalItems}
+                className="px-2 py-1 disabled:opacity-50"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Order Details Modal */}
       {selectedOrder && (
@@ -1471,8 +1156,8 @@ const AdminOrders = () => {
                     {selectedOrder.ekartStatus}
                   </span>
                   <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                    selectedOrder.paymentStatus === 'success' 
-                      ? 'bg-green-100 text-green-800' 
+                    selectedOrder.paymentStatus === 'success'
+                      ? 'bg-green-100 text-green-800'
                       : selectedOrder.paymentStatus === 'failed'
                       ? 'bg-red-100 text-red-800'
                       : 'bg-yellow-100 text-yellow-800'
@@ -1485,7 +1170,6 @@ const AdminOrders = () => {
                 <X className="w-6 h-6" />
               </button>
             </div>
-
             <div className="p-6 space-y-6">
               {/* Order Summary Cards */}
               <div className="grid grid-cols-3 gap-6">
@@ -1517,7 +1201,6 @@ const AdminOrders = () => {
                     </div>
                   </div>
                 </div>
-
                 <div className="border rounded-lg p-4">
                   <h3 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
                     <User className="w-5 h-5 text-green-600" />
@@ -1544,7 +1227,6 @@ const AdminOrders = () => {
                     </div>
                   </div>
                 </div>
-
                 <div className="border rounded-lg p-4">
                   <h3 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
                     <MapPin className="w-5 h-5 text-red-600" />
@@ -1554,8 +1236,8 @@ const AdminOrders = () => {
                     <div>{selectedOrder.shippingAddress?.address || 'N/A'}</div>
                     <div>{selectedOrder.shippingAddress?.locality || ''}</div>
                     <div>
-                      {selectedOrder.shippingAddress?.city || ''}, 
-                      {selectedOrder.shippingAddress?.state || ''} - 
+                      {selectedOrder.shippingAddress?.city || ''},
+                      {selectedOrder.shippingAddress?.state || ''} -
                       {selectedOrder.shippingAddress?.pincode || ''}
                     </div>
                     {selectedOrder.shippingAddress?.landmark && (
@@ -1564,7 +1246,6 @@ const AdminOrders = () => {
                   </div>
                 </div>
               </div>
-
               {/* Payment & Amount */}
               <div className="grid grid-cols-2 gap-6">
                 <div className="border rounded-lg p-4">
@@ -1599,7 +1280,6 @@ const AdminOrders = () => {
                     )}
                   </div>
                 </div>
-
                 <div className="border rounded-lg p-4">
                   <h3 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
                     <Tag className="w-5 h-5 text-orange-600" />
@@ -1625,7 +1305,6 @@ const AdminOrders = () => {
                   </div>
                 </div>
               </div>
-
               {/* Ekart Tracking Section */}
               {selectedOrder.ekartTrackingId && (
                 <div className="border rounded-lg p-4 bg-blue-50">
@@ -1634,7 +1313,7 @@ const AdminOrders = () => {
                       <Truck className="w-5 h-5 text-blue-600" />
                       Ekart Shipment Details
                     </h3>
-                    
+                   
                     <div className="flex gap-2">
                       <button
                         onClick={() => downloadLabel(selectedOrder)}
@@ -1653,7 +1332,7 @@ const AdminOrders = () => {
                           </>
                         )}
                       </button>
-                      
+                     
                       <button
                         onClick={() => downloadInvoice(selectedOrder)}
                         disabled={downloadingInvoice === selectedOrder.orderId}
@@ -1673,7 +1352,7 @@ const AdminOrders = () => {
                       </button>
                     </div>
                   </div>
-                  
+                 
                   <div className="grid grid-cols-2 gap-4 text-sm mb-4">
                     <div>
                       <span className="text-gray-600">Tracking ID:</span>
@@ -1688,7 +1367,7 @@ const AdminOrders = () => {
                     <div>
                       <span className="text-gray-600">Expected Delivery:</span>
                       <div className="mt-1 bg-white p-2 rounded border">
-                        {selectedOrder.expectedDelivery 
+                        {selectedOrder.expectedDelivery
                           ? new Date(selectedOrder.expectedDelivery).toLocaleDateString()
                           : 'Not set'}
                       </div>
@@ -1708,7 +1387,7 @@ const AdminOrders = () => {
                       </div>
                     </div>
                   </div>
-                  
+                 
                   {loadingTracking ? (
                     <div className="text-center py-4">
                       <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
@@ -1749,7 +1428,6 @@ const AdminOrders = () => {
                   )}
                 </div>
               )}
-
               {/* Order Items */}
               <div className="border rounded-lg p-4">
                 <h3 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
@@ -1761,9 +1439,9 @@ const AdminOrders = () => {
                     <div key={index} className="flex justify-between items-center border-b pb-3">
                       <div className="flex items-center gap-3">
                         {item.image && (
-                          <img 
-                            src={item.image} 
-                            alt={item.name} 
+                          <img
+                            src={item.image}
+                            alt={item.name}
                             className="w-16 h-16 object-cover rounded border"
                           />
                         )}
@@ -1782,7 +1460,6 @@ const AdminOrders = () => {
                   ))}
                 </div>
               </div>
-
               {/* Notes Section */}
               <div className="border rounded-lg p-4">
                 <h3 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
@@ -1817,7 +1494,6 @@ const AdminOrders = () => {
                   </button>
                 </div>
               </div>
-
               {/* Action Buttons */}
               <div className="flex justify-between pt-4 border-t">
                 <div className="flex space-x-3">
@@ -1840,7 +1516,7 @@ const AdminOrders = () => {
                       )}
                     </button>
                   )}
-                  
+                 
                   {selectedOrder.ekartStatus === 'Ready To Ship' && !selectedOrder.ekartTrackingId && (
                     <button
                       onClick={() => createShipment(selectedOrder.orderId)}
@@ -1860,7 +1536,7 @@ const AdminOrders = () => {
                       )}
                     </button>
                   )}
-                  
+                 
                   {selectedOrder.ekartTrackingId && (
                     <div className="flex space-x-3">
                       <button
@@ -1880,7 +1556,7 @@ const AdminOrders = () => {
                           </>
                         )}
                       </button>
-                      
+                     
                       <button
                         onClick={() => downloadInvoice(selectedOrder)}
                         disabled={downloadingInvoice === selectedOrder.orderId}
@@ -1901,7 +1577,7 @@ const AdminOrders = () => {
                     </div>
                   )}
                 </div>
-                
+               
                 <div className="flex space-x-3">
                   <select
                     value={selectedOrder.orderStatus}
@@ -1915,7 +1591,7 @@ const AdminOrders = () => {
                     <option value="cancelled">Cancelled</option>
                     <option value="rto">RTO</option>
                   </select>
-                  
+                 
                   <button
                     onClick={closeModal}
                     className="px-6 py-2 border rounded-lg hover:bg-gray-50"
@@ -1928,6 +1604,216 @@ const AdminOrders = () => {
           </div>
         </div>
       )}
+
+      {/* Quick Actions - Hidden in screenshot but kept for functionality */}
+      <div className="mt-6 p-4 bg-gray-50 border rounded-lg hidden">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-4">
+            <span className="font-medium text-gray-700">Quick Actions:</span>
+           
+            <button
+              onClick={downloadAllLabels}
+              disabled={downloadingBulk}
+              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center text-sm"
+            >
+              {downloadingBulk ? (
+                <>
+                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white mr-2"></div>
+                  Downloading...
+                </>
+              ) : (
+                <>
+                  <FileDown className="w-4 h-4 mr-2" />
+                  Download All Labels
+                </>
+              )}
+            </button>
+           
+            <button
+              onClick={downloadAllInvoices}
+              disabled={downloadingBulk}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center text-sm"
+            >
+              {downloadingBulk ? (
+                <>
+                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white mr-2"></div>
+                  Downloading...
+                </>
+              ) : (
+                <>
+                  <Receipt className="w-4 h-4 mr-2" />
+                  Download All Invoices
+                </>
+              )}
+            </button>
+           
+            <button
+              onClick={downloadManifest}
+              disabled={downloadingManifest}
+              className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 flex items-center text-sm"
+            >
+              {downloadingManifest ? (
+                <>
+                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white mr-2"></div>
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <Layers className="w-4 h-4 mr-2" />
+                  Download Manifest
+                </>
+              )}
+            </button>
+          </div>
+         
+          <div className="flex items-center space-x-4">
+            <div className="flex items-center">
+              <span className="text-sm text-gray-600 mr-2">View:</span>
+              <div className="flex border rounded-lg">
+                <button
+                  onClick={() => setViewType('table')}
+                  className={`px-3 py-1 text-sm ${viewType === 'table' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700'}`}
+                >
+                  Table
+                </button>
+                <button
+                  onClick={() => setViewType('card')}
+                  className={`px-3 py-1 text-sm ${viewType === 'card' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700'}`}
+                >
+                  Cards
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Card View - Kept but hidden in table mode */}
+      {viewType === 'card' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-6">
+          {filteredOrders.map((order) => (
+            <div key={order._id} className="bg-white border rounded-lg p-4 hover:shadow-md transition-shadow">
+              <div className="flex justify-between items-start mb-3">
+                <div>
+                  <div className="font-medium text-gray-900">{order.displayOrderId}</div>
+                  <div className="text-xs text-gray-500">
+                    {new Date(order.createdAt).toLocaleDateString()}
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={selectedOrders.includes(order._id)}
+                  onChange={() => toggleOrderSelection(order._id)}
+                  className="rounded"
+                />
+              </div>
+             
+              <div className="mb-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className={`px-2 py-1 rounded-full text-xs font-medium border ${getEkartStatusColor(order.ekartStatus)}`}>
+                    {order.ekartStatus}
+                  </span>
+                  <span className="font-medium">₹{order.finalAmount}</span>
+                </div>
+               
+                <div className="text-sm text-gray-600 mb-1">
+                  <User className="w-3 h-3 inline mr-1" />
+                  {order.shippingAddress?.name || 'Customer'}
+                </div>
+                <div className="text-sm text-gray-600 mb-1">
+                  <Phone className="w-3 h-3 inline mr-1" />
+                  {order.shippingAddress?.mobile || 'N/A'}
+                </div>
+                <div className="text-sm text-gray-600">
+                  <MapPin className="w-3 h-3 inline mr-1" />
+                  {order.shippingAddress?.city || ''}
+                </div>
+              </div>
+             
+              <div className="mb-3">
+                <div className="text-sm font-medium text-gray-700 mb-1">Items:</div>
+                <div className="text-sm text-gray-600">{order.displayItems}</div>
+              </div>
+             
+              {order.ekartTrackingId && (
+                <div className="mb-3 p-2 bg-blue-50 rounded">
+                  <div className="text-xs font-medium text-blue-800 mb-1">Tracking ID:</div>
+                  <div className="font-mono text-sm">{order.ekartTrackingId}</div>
+                </div>
+              )}
+             
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => viewOrderDetails(order)}
+                  className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 flex items-center"
+                >
+                  <Eye className="w-3 h-3 mr-1" />
+                  View
+                </button>
+               
+                {order.ekartTrackingId && (
+                  <>
+                    <button
+                      onClick={() => downloadLabel(order)}
+                      disabled={downloadingLabel === order.orderId}
+                      className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700 disabled:opacity-50 flex items-center"
+                    >
+                      <FileDown className="w-3 h-3 mr-1" />
+                      Label
+                    </button>
+                   
+                    <button
+                      onClick={() => downloadInvoice(order)}
+                      disabled={downloadingInvoice === order.orderId}
+                      className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50 flex items-center"
+                    >
+                      <Receipt className="w-3 h-3 mr-1" />
+                      Invoice
+                    </button>
+                  </>
+                )}
+               
+                {order.ekartStatus === 'Ready To Ship' && !order.ekartTrackingId && (
+                  <button
+                    onClick={() => createShipment(order.orderId)}
+                    disabled={creatingShipment === order.orderId}
+                    className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700 disabled:opacity-50"
+                  >
+                    {creatingShipment === order.orderId ? 'Creating...' : 'Ship'}
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+         
+          {filteredOrders.length === 0 && (
+            <div className="col-span-3 text-center py-12">
+              <Package className="mx-auto h-12 w-12 text-gray-400" />
+              <h3 className="mt-2 text-sm font-medium text-gray-900">No orders found</h3>
+              <p className="mt-1 text-sm text-gray-500">
+                {searchTerm ? 'Try a different search term' : 'No orders match the selected filter'}
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Status Filter Buttons - Integrated in header but kept for completeness */}
+      <div className="flex space-x-2 mt-4 hidden">
+        {statusOptions.map(status => (
+          <button
+            key={status}
+            onClick={() => setStatusFilter(status)}
+            className={`px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap ${
+              statusFilter === status
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+            }`}
+          >
+            {status}
+          </button>
+        ))}
+      </div>
     </div>
   );
 };
